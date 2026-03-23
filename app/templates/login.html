@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-lg-5">
+    <div class="glass p-4 p-lg-5 hero">
+      <h1 class="fw-bold mb-2">כניסה למערכת</h1>
+      <p class="tiny mb-4">מערכת משימות מסונכרנת לעובדים ולמעסיק מכל מקום דרך האינטרנט.</p>
+      <form method="post" class="row g-3">
+        <div class="col-12">
+          <label class="form-label">שם משתמש</label>
+          <input class="form-control form-control-lg" name="username" required>
+        </div>
+        <div class="col-12">
+          <label class="form-label">סיסמה</label>
+          <input type="password" class="form-control form-control-lg" name="password" required>
+        </div>
+        <div class="col-12 d-grid">
+          <button class="btn btn-primary btn-lg">כניסה</button>
+        </div>
+      </form>
+      <div class="mt-4 tiny">
+        משתמש ראשון: <b>admin</b> | סיסמה: <b>admin123</b>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
