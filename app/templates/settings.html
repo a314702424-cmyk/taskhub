@@ -20,6 +20,7 @@
         <div class="col-12 d-flex gap-2">
           <button class="btn btn-primary">שמור הגדרות</button>
           <a class="btn btn-outline-secondary" href="{{ url_for('export_settings') }}">הורדת גיבוי הגדרות</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('export_all_backup') }}">יצוא מלא: הגדרות + עובדים + משימות</a>
         </div>
       </form>
     </div>
@@ -32,8 +33,17 @@
         <button class="btn btn-success">ייבא קובץ גיבוי</button>
       </form>
     </div>
-    <div class="glass p-4">
-      <h5 class="fw-bold">הערות</h5>
+
+<div class="glass p-4 mb-4">
+  <h5 class="fw-bold">ייבוא גיבוי מלא</h5>
+  <div class="tiny mb-2">הקובץ המלא מחזיר את כל ההגדרות, העובדים, המשימות והיסטוריית העדכונים.</div>
+  <form method="post" action="{{ url_for('import_all_backup') }}" enctype="multipart/form-data">
+    <input class="form-control mb-3" type="file" name="backup_file" accept="application/json" required>
+    <button class="btn btn-warning" onclick="return confirm('לייבא גיבוי מלא ולדרוס את הנתונים הקיימים?')">ייבא גיבוי מלא</button>
+  </form>
+</div>
+<div class="glass p-4">
+  <h5 class="fw-bold">הערות</h5>
       <div class="tiny">
         כדי שכולם ייכנסו דרך האינטרנט ממחשבים שונים, מעלים את הפרויקט לשרת אחד, ואז כל העובדים נכנסים לאותה כתובת אתר.
       </div>

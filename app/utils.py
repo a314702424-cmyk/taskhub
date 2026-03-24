@@ -2,6 +2,8 @@ from datetime import date
 from convertdate import hebrew
 import calendar
 import smtplib
+import ssl
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -55,10 +57,12 @@ def smtp_config_for_user(user, settings):
         'smtp_password': user.smtp_password or settings.smtp_password,
         'smtp_sender': user.display_sender_email or settings.smtp_sender,
         'target_email': user.employer_target_email or settings.employer_email,
+        'use_tls': int(user.smtp_port or settings.smtp_port or 587) != 465,
+        'smtp_timeout': 15,
     }
 
 
-def send_email(config, to_email, subject, html_body):
+def _send_email_sync(config, to_email, subject, html_body):
     if not all([
         config.get('smtp_host'),
         config.get('smtp_port'),
@@ -75,14 +79,48 @@ def send_email(config, to_email, subject, html_body):
     msg['To'] = to_email
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
+    port = int(config['smtp_port'])
+    host = config['smtp_host']
+    username = config['smtp_username']
+    password = config['smtp_password']
+    timeout = int(config.get('smtp_timeout') or 15)
+
     try:
-        with smtplib.SMTP(config['smtp_host'], int(config['smtp_port'])) as server:
-            server.starttls()
-            server.login(config['smtp_username'], config['smtp_password'])
-            server.sendmail(config['smtp_sender'], [to_email], msg.as_string())
+        if port == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, timeout=timeout, context=context) as server:
+                server.login(username, password)
+                server.sendmail(config['smtp_sender'], [to_email], msg.as_string())
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout) as server:
+                server.ehlo()
+                if config.get('use_tls', True):
+                    context = ssl.create_default_context()
+                    server.starttls(context=context)
+                    server.ehlo()
+                server.login(username, password)
+                server.sendmail(config['smtp_sender'], [to_email], msg.as_string())
         return True, 'נשלח בהצלחה'
     except Exception as exc:
         return False, str(exc)
+
+
+def send_email(config, to_email, subject, html_body):
+    return _send_email_sync(config, to_email, subject, html_body)
+
+
+def send_email_async(config, to_email, subject, html_body):
+    result = {'ok': False, 'message': 'שליחת המייל התחילה ברקע.'}
+
+    def worker():
+        ok, msg = _send_email_sync(config, to_email, subject, html_body)
+        result['ok'] = ok
+        result['message'] = msg
+        print('EMAIL RESULT:', ok, msg)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return True, result['message']
 
 
 def format_task_summary(tasks):

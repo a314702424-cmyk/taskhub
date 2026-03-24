@@ -3,11 +3,11 @@ from datetime import datetime, date
 from functools import wraps
 from flask import render_template, request, redirect, url_for, flash, Response
 from flask_login import login_user, logout_user, login_required, current_user
-from .models import db, User, Task, TaskUpdate, get_settings
+from .models import db, User, Task, TaskUpdate, get_settings, export_all_data, import_all_data
 from .utils import (
     hebrew_date_string,
     build_month_calendar,
-    send_email,
+    send_email_async,
     format_task_summary,
     PRIORITY_META,
     STATUS_META,
@@ -82,7 +82,11 @@ def register_routes(app):
                 flash('תאריך הסינון לא תקין.', 'danger')
         tasks = query.order_by(Task.position.asc(), Task.updated_at.desc()).all()
         users = User.query.filter_by(is_active_user=True).order_by(User.full_name.asc()).all()
-        return render_template('dashboard.html', tasks=tasks, users=users, date_filter=date_filter, assignee_filter=assignee_filter)
+        employee_users = [u for u in users if u.role == 'employee' and u.is_active_user]
+        selected_employee = None
+        if assignee_filter.isdigit():
+            selected_employee = next((u for u in employee_users if u.id == int(assignee_filter)), None)
+        return render_template('dashboard.html', tasks=tasks, users=users, employee_users=employee_users, selected_employee=selected_employee, date_filter=date_filter, assignee_filter=assignee_filter)
 
     @app.route('/task/create', methods=['POST'])
     @login_required
@@ -243,6 +247,34 @@ def register_routes(app):
             flash(f'שגיאה בייבוא: {exc}', 'danger')
         return redirect(url_for('settings_page'))
 
+
+
+@app.route('/backup/export-all')
+@login_required
+@admin_required
+def export_all_backup():
+    payload = export_all_data()
+    data = json.dumps(payload, ensure_ascii=False, indent=2)
+    filename = f"taskhub_full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(data, mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}'})
+
+@app.route('/backup/import-all', methods=['POST'])
+@login_required
+@admin_required
+def import_all_backup():
+    file = request.files.get('backup_file')
+    if not file:
+        flash('לא נבחר קובץ גיבוי מלא.', 'danger')
+        return redirect(url_for('settings_page'))
+    try:
+        payload = json.load(file)
+        import_all_data(payload)
+        flash('כל הנתונים יובאו בהצלחה: הגדרות, עובדים, משימות והיסטוריית עדכונים.', 'success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'שגיאה בייבוא הגיבוי המלא: {exc}', 'danger')
+    return redirect(url_for('settings_page'))
+
     @app.route('/users', methods=['GET', 'POST'])
     @login_required
     @admin_required
@@ -334,6 +366,6 @@ def register_routes(app):
         tasks = Task.query.filter_by(assignee_id=current_user.id).order_by(Task.position.asc()).all()
         body = f"<h2>סיכום סוף משמרת - {current_user.full_name}</h2>" + format_task_summary(tasks)
         config = smtp_config_for_user(current_user, settings)
-        ok, msg = send_email(config, config['target_email'], f'סיכום משמרת - {current_user.full_name}', body)
-        flash('נשלח בהצלחה.' if ok else f'לא נשלח: {msg}', 'success' if ok else 'danger')
+        ok, msg = send_email_async(config, config['target_email'], f'סיכום משמרת - {current_user.full_name}', body)
+        flash('בקשת השליחה יצאה. אם ההגדרות תקינות, הסיכום יישלח תוך זמן קצר.' if ok else f'לא נשלח: {msg}', 'success' if ok else 'danger')
         return redirect(url_for('dashboard'))
