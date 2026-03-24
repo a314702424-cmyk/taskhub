@@ -3,7 +3,13 @@
 <div class="row g-4">
   <div class="col-lg-8">
     <div class="task-card p-4">
-      <h3 class="fw-bold mb-3">הגדרות מערכת</h3>
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+          <h3 class="fw-bold mb-1">הגדרות מערכת</h3>
+          <div class="tiny">גרסה פעילה: <b>V5</b> — במסך הזה יש כפתורי יצוא וייבוא גלויים.</div>
+        </div>
+        <span class="chip">יצוא / ייבוא מלא</span>
+      </div>
       <form method="post" class="row g-3">
         <div class="col-md-6"><label class="form-label">שם המערכת</label><input class="form-control" name="company_name" value="{{ settings.company_name }}"></div>
         <div class="col-md-6"><label class="form-label">מייל המעסיק לקבלת סיכומים</label><input class="form-control" name="employer_email" value="{{ settings.employer_email }}"></div>
@@ -11,42 +17,48 @@
         <div class="col-md-2"><label class="form-label">Port</label><input class="form-control" name="smtp_port" value="{{ settings.smtp_port }}"></div>
         <div class="col-md-3"><label class="form-label">SMTP Username</label><input class="form-control" name="smtp_username" value="{{ settings.smtp_username }}"></div>
         <div class="col-md-3"><label class="form-label">SMTP Password</label><input type="password" class="form-control" name="smtp_password" value="{{ settings.smtp_password }}"></div>
-        <div class="col-md-4"><label class="form-label">כתובת שולח</label><input class="form-control" name="smtp_sender" value="{{ settings.smtp_sender }}"></div>
+        <div class="col-md-4"><label class="form-label">כתובת שולח כללית</label><input class="form-control" name="smtp_sender" value="{{ settings.smtp_sender }}"></div>
         <div class="col-md-4"><label class="form-label">צבע ראשי</label><input type="color" class="form-control form-control-color" name="primary_color" value="{{ settings.primary_color }}"></div>
         <div class="col-md-4"><label class="form-label">צבע רקע משני</label><input type="color" class="form-control form-control-color" name="secondary_color" value="{{ settings.secondary_color }}"></div>
         <div class="col-md-4"><label class="form-label">צבע הדגשה</label><input type="color" class="form-control form-control-color" name="accent_color" value="{{ settings.accent_color }}"></div>
         <div class="col-md-4"><label class="form-label">צבע כרטיסים</label><input type="color" class="form-control form-control-color" name="card_color" value="{{ settings.card_color }}"></div>
         <div class="col-md-4"><label class="form-label">צבע טקסט</label><input type="color" class="form-control form-control-color" name="text_color" value="{{ settings.text_color }}"></div>
-        <div class="col-12 d-flex gap-2">
+        <div class="col-12 d-flex gap-2 flex-wrap">
           <button class="btn btn-primary">שמור הגדרות</button>
-          <a class="btn btn-outline-secondary" href="{{ url_for('export_settings') }}">הורדת גיבוי הגדרות</a>
-          <a class="btn btn-outline-primary" href="{{ url_for('export_all_backup') }}">יצוא מלא: הגדרות + עובדים + משימות</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('export_settings') }}">יצוא הגדרות בלבד</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('export_all_backup') }}">יצוא מלא של הכל</a>
         </div>
       </form>
     </div>
   </div>
+
   <div class="col-lg-4">
-    <div class="glass p-4 mb-4">
-      <h5 class="fw-bold">ייבוא הגדרות</h5>
+    <div class="glass p-4 mb-4 border border-success-subtle">
+      <h5 class="fw-bold mb-2">ייבוא הגדרות בלבד</h5>
+      <div class="tiny mb-3">מייבא רק את הגדרות המערכת הכלליות.</div>
       <form method="post" action="{{ url_for('import_settings') }}" enctype="multipart/form-data">
         <input class="form-control mb-3" type="file" name="settings_file" accept="application/json" required>
-        <button class="btn btn-success">ייבא קובץ גיבוי</button>
+        <button class="btn btn-success w-100">ייבוא הגדרות</button>
       </form>
     </div>
 
-<div class="glass p-4 mb-4">
-  <h5 class="fw-bold">ייבוא גיבוי מלא</h5>
-  <div class="tiny mb-2">הקובץ המלא מחזיר את כל ההגדרות, העובדים, המשימות והיסטוריית העדכונים.</div>
-  <form method="post" action="{{ url_for('import_all_backup') }}" enctype="multipart/form-data">
-    <input class="form-control mb-3" type="file" name="backup_file" accept="application/json" required>
-    <button class="btn btn-warning" onclick="return confirm('לייבא גיבוי מלא ולדרוס את הנתונים הקיימים?')">ייבא גיבוי מלא</button>
-  </form>
-</div>
-<div class="glass p-4">
-  <h5 class="fw-bold">הערות</h5>
-      <div class="tiny">
-        כדי שכולם ייכנסו דרך האינטרנט ממחשבים שונים, מעלים את הפרויקט לשרת אחד, ואז כל העובדים נכנסים לאותה כתובת אתר.
-      </div>
+    <div class="glass p-4 mb-4 border border-warning-subtle">
+      <h5 class="fw-bold mb-2">ייבוא מלא של כל הנתונים</h5>
+      <div class="tiny mb-3">מייבא הגדרות, עובדים, משימות והיסטוריית עדכונים מתוך קובץ JSON אחד.</div>
+      <form method="post" action="{{ url_for('import_all_backup') }}" enctype="multipart/form-data">
+        <input class="form-control mb-3" type="file" name="backup_file" accept="application/json" required>
+        <button class="btn btn-warning w-100" onclick="return confirm('לייבא גיבוי מלא ולדרוס את הנתונים הקיימים?')">ייבוא מלא של הכל</button>
+      </form>
+    </div>
+
+    <div class="glass p-4">
+      <h5 class="fw-bold mb-2">מה צריך לראות ב-V5</h5>
+      <ul class="tiny mb-0">
+        <li>כפתור <b>יצוא הגדרות בלבד</b></li>
+        <li>כפתור <b>יצוא מלא של הכל</b></li>
+        <li>טופס <b>ייבוא הגדרות בלבד</b></li>
+        <li>טופס <b>ייבוא מלא של כל הנתונים</b></li>
+      </ul>
     </div>
   </div>
 </div>
