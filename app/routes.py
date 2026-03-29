@@ -29,64 +29,67 @@ def parse_due_date(raw_value):
     return datetime.strptime(raw_value, '%Y-%m-%d').date() if raw_value else None
 
 
-def notify_task_created(task, current_user, settings):
+def build_task_notification_body(task, action_label):
+    assignee_name = task.assignee.full_name if task.assignee else 'לא משויך'
+    due_text = task.due_date.strftime('%d/%m/%Y') if task.due_date else 'ללא תאריך יעד'
+    priority = PRIORITY_META.get(task.priority, PRIORITY_META['normal'])
+    description_html = (task.description or '').replace(chr(10), '<br>')
+    return f"""<div dir='rtl' style='font-family:Arial,sans-serif;line-height:1.8'>
+<h2>שלום רב,</h2>
+<p>{action_label}</p>
+<p><b>כותרת המשימה:</b> {task.title}</p>
+<p><b>עובד משויך:</b> {assignee_name}</p>
+<p><b>עדיפות:</b> {priority['icon']} {priority['label']}</p>
+<p><b>תאריך יעד:</b> {due_text}</p>
+<p><b>תיאור:</b><br>{description_html}</p>
+<p>תודה רבה</p>
+</div>"""
+
+
+def notify_task_change(task, actor, settings, action='new'):
     try:
+        subject = 'נוספה לך משימה חדשה' if action == 'new' else 'משימה עודכנה'
+        action_label = 'נוספה לך משימה חדשה.' if action == 'new' else 'עודכנה משימה קיימת.'
+
+        assignee_user = User.query.get(task.assignee_id) if task.assignee_id else None
+
         recipients = []
+        if assignee_user and assignee_user.email:
+            recipients.append(assignee_user.email.strip())
 
-        if getattr(task, 'assignee', None) and getattr(task.assignee, 'email', None):
-            if task.assignee.email:
-                recipients.append(task.assignee.email.strip())
-
-        if settings.employer_email:
+        employer_email = ''
+        if assignee_user and assignee_user.employer_target_email:
+            employer_email = assignee_user.employer_target_email.strip()
+        elif settings.employer_email:
             employer_email = settings.employer_email.strip()
-            if employer_email and employer_email not in recipients:
-                recipients.append(employer_email)
 
-        if not recipients:
-            print("TASK CREATED EMAIL SKIPPED: no recipients")
+        if employer_email:
+            recipients.append(employer_email)
+
+        clean_recipients = []
+        seen = set()
+        for email in recipients:
+            email = (email or '').strip()
+            if email and email not in seen:
+                clean_recipients.append(email)
+                seen.add(email)
+
+        if not clean_recipients:
+            print('TASK EMAIL SKIPPED: no recipients')
             return
 
-        subject = "נוספה משימה חדשה"
-        body = f"שלום רב,\nנוספה לך משימה חדשה: {task.title}\nתודה רבה"
+        mail_user = assignee_user or actor
+        config = smtp_config_for_user(mail_user, settings)
+        body = build_task_notification_body(task, action_label)
 
-        config = smtp_config_for_user(current_user, settings)
+        print('TASK EMAIL CONFIG USER:', getattr(mail_user, 'username', None))
+        print('TASK EMAIL RECIPIENTS:', clean_recipients)
 
-        for email in recipients:
-            ok, msg = send_email_async(config, email, subject, body)
-            print(f"TASK CREATED EMAIL TO {email}: ok={ok}, msg={msg}")
-
-    except Exception as e:
-        print("TASK CREATED EMAIL ERROR:", str(e))
-
-
-def notify_task_updated(task, current_user, settings):
-    try:
-        recipients = []
-
-        if getattr(task, 'assignee', None) and getattr(task.assignee, 'email', None):
-            if task.assignee.email:
-                recipients.append(task.assignee.email.strip())
-
-        if settings.employer_email:
-            employer_email = settings.employer_email.strip()
-            if employer_email and employer_email not in recipients:
-                recipients.append(employer_email)
-
-        if not recipients:
-            print("TASK UPDATED EMAIL SKIPPED: no recipients")
-            return
-
-        subject = "משימה עודכנה"
-        body = f"שלום רב,\nהמשימה עודכנה: {task.title}\nתודה רבה"
-
-        config = smtp_config_for_user(current_user, settings)
-
-        for email in recipients:
-            ok, msg = send_email_async(config, email, subject, body)
-            print(f"TASK UPDATED EMAIL TO {email}: ok={ok}, msg={msg}")
-
-    except Exception as e:
-        print("TASK UPDATED EMAIL ERROR:", str(e))
+        for target_email in clean_recipients:
+            ok, msg = send_email_async(config, target_email, subject, body)
+            print('TASK EMAIL RESULT:', target_email, ok, msg)
+    except Exception as exc:
+        print('TASK EMAIL ERROR:', str(exc))
 
 
 def register_routes(app):
@@ -99,7 +102,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V6',
+            'ui_version': 'V7',
         }
 
     @app.route('/')
@@ -163,9 +166,7 @@ def register_routes(app):
         assignee_id = int(request.form.get('assignee_id') or current_user.id)
         if current_user.role != 'admin':
             assignee_id = current_user.id
-
         max_pos = db.session.query(db.func.max(Task.position)).scalar() or 0
-
         task = Task(
             title=request.form.get('title', '').strip(),
             description=request.form.get('description', '').strip(),
@@ -175,17 +176,13 @@ def register_routes(app):
             position=max_pos + 1,
             due_date=parse_due_date(request.form.get('due_date') or None),
         )
-
         if not task.title:
             flash('צריך להזין כותרת למשימה.', 'danger')
             return redirect(url_for('dashboard'))
-
         db.session.add(task)
         db.session.commit()
-
         settings = get_settings()
-        notify_task_created(task, current_user, settings)
-
+        notify_task_change(task, current_user, settings, action='new')
         flash('המשימה נוספה.', 'success')
         return redirect(url_for('dashboard'))
 
@@ -196,21 +193,16 @@ def register_routes(app):
         if current_user.role != 'admin' and task.assignee_id != current_user.id:
             flash('אין הרשאה.', 'danger')
             return redirect(url_for('dashboard'))
-
         task.title = request.form.get('title', task.title).strip()
         task.description = request.form.get('description', task.description).strip()
         task.status = request.form.get('status', task.status)
         task.priority = request.form.get('priority', task.priority)
         task.due_date = parse_due_date(request.form.get('due_date') or None)
-
         if current_user.role == 'admin':
             task.assignee_id = int(request.form.get('assignee_id') or task.assignee_id)
-
         db.session.commit()
-
         settings = get_settings()
-        notify_task_updated(task, current_user, settings)
-
+        notify_task_change(task, current_user, settings, action='updated')
         flash('המשימה עודכנה.', 'success')
         return redirect(url_for('dashboard'))
 
@@ -469,4 +461,4 @@ def register_routes(app):
 
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v6'}
+        return {'ok': True, 'version': 'v7'}
