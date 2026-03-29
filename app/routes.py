@@ -102,7 +102,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V7',
+'ui_version': 'V7-NEW'
         }
 
     @app.route('/')
