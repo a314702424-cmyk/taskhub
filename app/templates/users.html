@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-xl-4">
+    <div class="task-card p-4">
+      <h3 class="fw-bold mb-3">הוספת משתמש</h3>
+      <form method="post" class="row g-3">
+        <div class="col-md-6"><label class="form-label">שם משתמש</label><input class="form-control" name="username" required></div>
+        <div class="col-md-6"><label class="form-label">שם מלא</label><input class="form-control" name="full_name" required></div>
+        <div class="col-md-6"><label class="form-label">אימייל עובד</label><input class="form-control" name="email"></div>
+        <div class="col-md-6"><label class="form-label">כתובת שולח לסיכום</label><input class="form-control" name="sender_email" placeholder="מייל השולח של העובד"></div>
+        <div class="col-md-6"><label class="form-label">תפקיד</label><select class="form-select" name="role"><option value="employee">עובד</option><option value="admin">מנהל</option></select></div>
+        <div class="col-md-6"><label class="form-label">סיסמה ראשונית</label><input class="form-control" name="password" value="123456"></div>
+        <div class="col-md-6"><label class="form-label">SMTP Host</label><input class="form-control" name="smtp_host"></div>
+        <div class="col-md-6"><label class="form-label">SMTP Port</label><input class="form-control" name="smtp_port" value="587"></div>
+        <div class="col-md-6"><label class="form-label">SMTP Username</label><input class="form-control" name="smtp_username"></div>
+        <div class="col-md-6"><label class="form-label">SMTP Password</label><input type="password" class="form-control" name="smtp_password"></div>
+        <div class="col-md-8"><label class="form-label">מייל יעד לסיכומים של המשתמש</label><input class="form-control" name="employer_target_email" placeholder="אם ריק - יישלח למייל המעסיק הכללי"></div>
+        <div class="col-md-4"><label class="form-label">צבע משתמש</label><input type="color" class="form-control form-control-color" name="theme_color" value="#1a73e8"></div>
+        <div class="col-12 d-grid"><button class="btn btn-primary">צור משתמש</button></div>
+      </form>
+    </div>
+  </div>
+  <div class="col-xl-8">
+    <div class="task-card p-4">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h3 class="fw-bold m-0">ניהול ועריכת משתמשים</h3>
+        <div class="tiny">כאן מגדירים עבור כל משתמש את כל פרטי השליחה, כך שסיכום המשמרת יישלח מהמייל שלו</div>
+      </div>
+      <div class="accordion" id="usersAccordion">
+        {% for user in users %}
+        <div class="accordion-item mb-3 border-0 task-card overflow-hidden">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#user-{{ user.id }}">
+              <div class="d-flex justify-content-between align-items-center w-100 ms-3 flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-2">
+                  <span class="avatar-dot" style="background: {{ user.theme_color }}">{{ user.full_name[:1] }}</span>
+                  <span class="fw-bold">{{ user.full_name }}</span>
+                  <span class="tiny">@{{ user.username }}</span>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                  <span class="chip">{{ 'מנהל' if user.role == 'admin' else 'עובד' }}</span>
+                  <span class="chip">{{ 'פעיל' if user.is_active_user else 'מושבת' }}</span>
+                  <span class="chip">שולח: {{ user.display_sender_email or 'לא הוגדר' }}</span>
+                </div>
+              </div>
+            </button>
+          </h2>
+          <div id="user-{{ user.id }}" class="accordion-collapse collapse" data-bs-parent="#usersAccordion">
+            <div class="accordion-body">
+              <form method="post" action="{{ url_for('edit_user', user_id=user.id) }}" class="row g-3">
+                <div class="col-md-4"><label class="form-label">שם משתמש</label><input class="form-control" name="username" value="{{ user.username }}" required></div>
+                <div class="col-md-4"><label class="form-label">שם מלא</label><input class="form-control" name="full_name" value="{{ user.full_name }}" required></div>
+                <div class="col-md-4"><label class="form-label">תפקיד</label><select class="form-select" name="role"><option value="employee" {% if user.role == 'employee' %}selected{% endif %}>עובד</option><option value="admin" {% if user.role == 'admin' %}selected{% endif %}>מנהל</option></select></div>
+                <div class="col-md-4"><label class="form-label">אימייל עובד</label><input class="form-control" name="email" value="{{ user.email }}"></div>
+                <div class="col-md-4"><label class="form-label">כתובת השולח</label><input class="form-control" name="sender_email" value="{{ user.sender_email }}"></div>
+                <div class="col-md-4"><label class="form-label">צבע משתמש</label><input type="color" class="form-control form-control-color" name="theme_color" value="{{ user.theme_color or '#1a73e8' }}"></div>
+                <div class="col-md-4"><label class="form-label">SMTP Host</label><input class="form-control" name="smtp_host" value="{{ user.smtp_host }}"></div>
+                <div class="col-md-2"><label class="form-label">SMTP Port</label><input class="form-control" name="smtp_port" value="{{ user.smtp_port }}"></div>
+                <div class="col-md-3"><label class="form-label">SMTP Username</label><input class="form-control" name="smtp_username" value="{{ user.smtp_username }}"></div>
+                <div class="col-md-3"><label class="form-label">SMTP Password</label><input type="password" class="form-control" name="smtp_password" value="{{ user.smtp_password }}"></div>
+                <div class="col-md-6"><label class="form-label">מייל יעד לסיכומים</label><input class="form-control" name="employer_target_email" value="{{ user.employer_target_email }}"></div>
+                <div class="col-12 d-flex gap-2 flex-wrap">
+                  <button class="btn btn-primary">שמור שינויים</button>
+              </form>
+                  <form method="post" action="{{ url_for('toggle_user', user_id=user.id) }}"><button class="btn btn-outline-secondary">הפעל/השבת</button></form>
+                  <form method="post" action="{{ url_for('reset_password', user_id=user.id) }}" class="d-flex gap-2">
+                    <input class="form-control" name="new_password" placeholder="סיסמה חדשה">
+                    <button class="btn btn-outline-primary">עדכן סיסמה</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

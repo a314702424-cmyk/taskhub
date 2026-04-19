@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="glass p-4 mb-4 hero d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h3 class="fw-bold mb-1">לוח שנה משימות</h3>
+    <div class="tiny">לחיצה על יום או על משימה מעבירה ישר לרשימת המשימות המסוננת לאותו תאריך</div>
+  </div>
+  <form class="d-flex gap-2" method="get">
+    <input class="form-control" type="number" min="1" max="12" name="month" value="{{ month }}">
+    <input class="form-control" type="number" min="2024" max="2100" name="year" value="{{ year }}">
+    <button class="btn btn-primary">הצג</button>
+  </form>
+</div>
+<table class="table table-borderless align-middle">
+  <thead>
+    <tr>
+      <th>א׳</th><th>ב׳</th><th>ג׳</th><th>ד׳</th><th>ה׳</th><th>ו׳</th><th>ש׳</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for week in weeks %}
+    <tr>
+      {% for day in week %}
+      <td class="calendar-cell {% if not day.in_month %}out{% endif %}">
+        <div class="d-flex justify-content-between gap-2">
+          <a class="fw-bold text-decoration-none" href="{{ url_for('dashboard', date=day.date.isoformat()) }}">{{ day.date.day }}</a>
+          <span class="tiny">{{ day.hebrew }}</span>
+        </div>
+        <div class="mt-2 d-grid gap-2">
+          {% for task in day.tasks %}
+            <a class="badge text-bg-light text-start p-2 text-decoration-none" href="{{ url_for('dashboard', date=day.date.isoformat()) }}">{{ priority_meta[task.priority].icon }} {{ task.title }}<br><span class="tiny">{{ task.assignee.full_name }}</span></a>
+          {% endfor %}
+        </div>
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
