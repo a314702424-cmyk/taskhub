@@ -102,7 +102,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-'ui_version': 'V7-NEW'
+'ui_version': 'V9'
         }
 
     @app.route('/')
@@ -461,4 +461,4 @@ def register_routes(app):
 
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v7'}
+return {'ok': True, 'version': 'v9'}
