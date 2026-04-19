@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: taskhub-webapp
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn run:app
-    envVars:
-      - key: SECRET_KEY
-        generateValue: true
