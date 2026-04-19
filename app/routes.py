@@ -461,4 +461,4 @@ def register_routes(app):
 
     @app.route('/health')
     def health():
-return {'ok': True, 'version': 'v9'}
+    return {'ok': True, 'version': 'v9'}
