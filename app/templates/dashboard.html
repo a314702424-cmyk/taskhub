@@ -138,7 +138,7 @@
                     {% if task.due_date %}<span class="chip">📅 {{ task.due_date.strftime('%d/%m/%Y') }} | {{ hebrew_date_string(task.due_date) }}</span>{% endif %}
                   </div>
                   <p class="mb-2">{{ task.description or 'ללא תיאור' }}</p>
-                  <div class="tiny">נוצר: {{ task.created_at.strftime('%d/%m/%Y %H:%M') }} | יוצר: {{ task.creator.full_name if task.creator else '---' }} | עודכן: {{ task.updated_at.strftime('%d/%m/%Y %H:%M') }}</div>
+                  <div class="tiny">נוצר: {{ format_israel_datetime(task.created_at) }} | יוצר: {{ task.creator.full_name if task.creator else '---' }} | עודכן: {{ format_israel_datetime(task.updated_at) }}</div>
                 </div>
                 <div class="tiny">פתח / סגור ⌄</div>
               </div>
@@ -234,7 +234,7 @@
                 <div style="max-height:280px; overflow:auto">
                   {% for upd in task.updates %}
                     <div class="border-bottom pb-2 mb-2">
-                      <div class="tiny fw-bold">{{ upd.author_name }} | {{ upd.created_at.strftime('%d/%m/%Y %H:%M') }}</div>
+                      <div class="tiny fw-bold">{{ upd.author_name }} | {{ format_israel_datetime(upd.created_at) }}</div>
                       <div style="white-space:pre-wrap">{{ upd.content }}</div>
                     </div>
                   {% else %}
