@@ -1,6 +1,7 @@
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 from flask import render_template, request, redirect, url_for, flash, Response, session
 from flask_login import login_user, logout_user, login_required, current_user
@@ -16,6 +17,25 @@ from .utils import (
     STATUS_META,
     smtp_config_for_user,
 )
+
+ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def to_israel_time(dt):
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ISRAEL_TZ)
+
+
+def format_israel_datetime(dt):
+    local_dt = to_israel_time(dt)
+    return local_dt.strftime('%d/%m/%Y %H:%M') if local_dt else ''
 
 
 def admin_required(func):
@@ -36,16 +56,19 @@ def get_shift_started_at():
     raw = session.get('shift_started_at')
     if raw:
         try:
-            return datetime.fromisoformat(raw)
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except ValueError:
             pass
-    now = datetime.utcnow()
+    now = utc_now()
     session['shift_started_at'] = now.isoformat()
     return now
 
 
 def set_new_shift_start():
-    now = datetime.utcnow()
+    now = utc_now()
     session['shift_started_at'] = now.isoformat()
     return now
 
@@ -81,7 +104,7 @@ def build_task_notification_body(task, action_label, update_entry=None):
         all_updates_html = '<p><b>כל העדכונים במשימה:</b></p><ul>'
         for upd in task.updates:
             all_updates_html += (
-                f"<li><b>{upd.author_name}</b> | {upd.created_at.strftime('%d/%m/%Y %H:%M')}<br>"
+                f"<li><b>{upd.author_name}</b> | {format_israel_datetime(upd.created_at)}<br>"
                 f"{(upd.content or '').replace(chr(10), '<br>')}</li>"
             )
         all_updates_html += '</ul>'
@@ -160,10 +183,14 @@ def build_shift_updates_html(tasks, shift_started_at):
         if task.updates:
             note_items = []
             for upd in task.updates:
-                if upd.created_at and upd.created_at >= shift_started_at:
-                    note_items.append(
-                        f"<li><b>{upd.author_name}</b> | {upd.created_at.strftime('%d/%m/%Y %H:%M')}<br>{upd.content.replace(chr(10), '<br>')}</li>"
-                    )
+                upd_dt = upd.created_at
+                if upd_dt:
+                    if upd_dt.tzinfo is None:
+                        upd_dt = upd_dt.replace(tzinfo=timezone.utc)
+                    if upd_dt >= shift_started_at:
+                        note_items.append(
+                            f"<li><b>{upd.author_name}</b> | {format_israel_datetime(upd.created_at)}<br>{upd.content.replace(chr(10), '<br>')}</li>"
+                        )
             if note_items:
                 pieces.append('<li><b>עדכונים במשמרת זו:</b><ul>' + ''.join(note_items) + '</ul></li>')
         if pieces:
@@ -182,6 +209,7 @@ def register_routes(app):
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
             'ui_version': 'V11',
+            'format_israel_datetime': format_israel_datetime,
         }
 
     @app.route('/')
@@ -247,6 +275,7 @@ def register_routes(app):
         selected_employee = None
         if assignee_filter.isdigit():
             selected_employee = next((u for u in employee_users if u.id == int(assignee_filter)), None)
+
         return render_template(
             'dashboard.html',
             tasks=tasks,
@@ -265,6 +294,7 @@ def register_routes(app):
         assignee_id = int(request.form.get('assignee_id') or current_user.id)
         if current_user.role != 'admin':
             assignee_id = current_user.id
+
         max_pos = db.session.query(db.func.max(Task.position)).scalar() or 0
         task = Task(
             title=request.form.get('title', '').strip(),
@@ -275,11 +305,14 @@ def register_routes(app):
             position=max_pos + 1,
             due_date=parse_due_date(request.form.get('due_date') or None),
         )
+
         if not task.title:
             flash('צריך להזין כותרת למשימה.', 'danger')
             return redirect_dashboard()
+
         db.session.add(task)
         db.session.commit()
+
         settings = get_settings()
         notify_task_change(task, current_user, settings, action='new')
         flash('המשימה נוספה.', 'success')
@@ -292,14 +325,18 @@ def register_routes(app):
         if current_user.role != 'admin' and task.assignee_id != current_user.id:
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
+
         task.title = request.form.get('title', task.title).strip()
         task.description = request.form.get('description', task.description).strip()
         task.status = request.form.get('status', task.status)
         task.priority = request.form.get('priority', task.priority)
         task.due_date = parse_due_date(request.form.get('due_date') or None)
+
         if current_user.role == 'admin':
             task.assignee_id = int(request.form.get('assignee_id') or task.assignee_id)
+
         db.session.commit()
+
         settings = get_settings()
         notify_task_change(task, current_user, settings, action='updated')
         flash('המשימה עודכנה.', 'success')
@@ -312,6 +349,7 @@ def register_routes(app):
         if current_user.role != 'admin' and task.assignee_id != current_user.id:
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
+
         db.session.delete(task)
         db.session.commit()
         flash('המשימה נמחקה.', 'success')
@@ -324,16 +362,20 @@ def register_routes(app):
         if current_user.role != 'admin' and task.assignee_id != current_user.id:
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
+
         content = request.form.get('content', '').strip()
         if not content:
             flash('אין תוכן לעדכון.', 'danger')
             return redirect_dashboard()
-        stamp = datetime.now().strftime('%d/%m/%Y %H:%M')
+
+        stamp = format_israel_datetime(utc_now())
         content_with_stamp = f"[{stamp}]\n{content}"
         note = TaskUpdate(task_id=task.id, content=content_with_stamp, author_name=current_user.full_name)
+
         db.session.add(note)
-        task.updated_at = datetime.utcnow()
+        task.updated_at = utc_now()
         db.session.commit()
+
         settings = get_settings()
         notify_task_change(task, current_user, settings, action='note', update_entry=note)
         flash('העדכון נשמר ונשלח.', 'success')
@@ -344,19 +386,24 @@ def register_routes(app):
     def move_task(task_id):
         task = Task.query.get_or_404(task_id)
         direction = request.form.get('direction')
+
         if current_user.role != 'admin' and task.assignee_id != current_user.id:
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
+
         query = Task.query
         if current_user.role != 'admin':
             query = query.filter_by(assignee_id=current_user.id)
+
         if direction == 'up':
             other = query.filter(Task.position < task.position).order_by(Task.position.desc()).first()
         else:
             other = query.filter(Task.position > task.position).order_by(Task.position.asc()).first()
+
         if other:
             task.position, other.position = other.position, task.position
             db.session.commit()
+
         return redirect_dashboard()
 
     @app.route('/calendar')
@@ -368,10 +415,12 @@ def register_routes(app):
         if current_user.role != 'admin':
             q = q.filter_by(assignee_id=current_user.id)
         tasks = q.all()
+
         tasks_by_date = {}
         for task in tasks:
             key = task.due_date.isoformat()
             tasks_by_date.setdefault(key, []).append(task)
+
         weeks = build_month_calendar(year, month, tasks_by_date)
         return render_template('calendar.html', weeks=weeks, month=month, year=year)
 
@@ -471,6 +520,7 @@ def register_routes(app):
             if User.query.filter_by(username=username).first():
                 flash('שם המשתמש כבר קיים.', 'danger')
                 return redirect(url_for('users_page'))
+
             user = User(
                 username=username,
                 full_name=request.form.get('full_name', '').strip(),
@@ -491,6 +541,7 @@ def register_routes(app):
             db.session.commit()
             flash('המשתמש נוסף.', 'success')
             return redirect(url_for('users_page'))
+
         users = User.query.order_by(User.role.desc(), User.full_name.asc()).all()
         return render_template('users.html', users=users)
 
@@ -504,6 +555,7 @@ def register_routes(app):
         if existing and existing.id != user.id:
             flash('שם המשתמש כבר קיים.', 'danger')
             return redirect(url_for('users_page'))
+
         user.username = username
         user.full_name = request.form.get('full_name', '').strip()
         user.email = request.form.get('email', '').strip()
@@ -527,6 +579,7 @@ def register_routes(app):
         if user.username == 'admin':
             flash('לא ניתן להשבית את admin.', 'danger')
             return redirect(url_for('users_page'))
+
         user.is_active_user = not user.is_active_user
         db.session.commit()
         flash('המשתמש עודכן.', 'success')
@@ -541,6 +594,7 @@ def register_routes(app):
         if not new_password:
             flash('צריך להזין סיסמה חדשה.', 'danger')
             return redirect(url_for('users_page'))
+
         user.set_password(new_password)
         db.session.commit()
         flash('הסיסמה עודכנה.', 'success')
@@ -553,15 +607,20 @@ def register_routes(app):
         shift_started_at = get_shift_started_at()
         tasks = Task.query.filter_by(assignee_id=current_user.id).order_by(Task.position.asc()).all()
         config = smtp_config_for_user(current_user, settings)
+
         body_updates = f"<h2>סיכום שינויים במשמרת - {current_user.full_name}</h2>" + build_shift_updates_html(tasks, shift_started_at)
         body_all = f"<h2>סיכום כללי סוף משמרת - {current_user.full_name}</h2>" + format_task_summary(tasks)
+
         ok1, msg1 = send_email_async(config, config['target_email'], f'שינויים במשמרת - {current_user.full_name}', body_updates)
         ok2, msg2 = send_email_async(config, config['target_email'], f'סיכום כללי סוף משמרת - {current_user.full_name}', body_all)
+
         set_new_shift_start()
+
         if ok1 and ok2:
             flash('נשלחו שני דוחות: שינויים במשמרת ודוח כללי.', 'success')
         else:
             flash(f'חלק מהשליחה נכשלה: {msg1} | {msg2}', 'danger')
+
         return redirect_dashboard()
 
     @app.route('/health')
