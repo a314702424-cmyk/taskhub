@@ -25,12 +25,17 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
-def to_israel_time(dt):
+def normalize_utc(dt):
     if not dt:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(ISRAEL_TZ)
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def to_israel_time(dt):
+    dt = normalize_utc(dt)
+    return dt.astimezone(ISRAEL_TZ) if dt else None
 
 
 def format_israel_datetime(dt):
@@ -56,10 +61,7 @@ def get_shift_started_at():
     raw = session.get('shift_started_at')
     if raw:
         try:
-            dt = datetime.fromisoformat(raw)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
+            return normalize_utc(datetime.fromisoformat(raw))
         except ValueError:
             pass
     now = utc_now()
@@ -176,25 +178,30 @@ def notify_task_change(task, actor, settings, action='new', update_entry=None):
 
 def build_shift_updates_html(tasks, shift_started_at):
     sections = []
+    shift_started_at = normalize_utc(shift_started_at)
+
     for task in tasks:
         pieces = []
-        if task.created_at and task.created_at >= shift_started_at:
+        task_created_at = normalize_utc(task.created_at)
+
+        if task_created_at and shift_started_at and task_created_at >= shift_started_at:
             pieces.append('<li>המשימה נוצרה במשמרת זו</li>')
+
         if task.updates:
             note_items = []
             for upd in task.updates:
-                upd_dt = upd.created_at
-                if upd_dt:
-                    if upd_dt.tzinfo is None:
-                        upd_dt = upd_dt.replace(tzinfo=timezone.utc)
-                    if upd_dt >= shift_started_at:
-                        note_items.append(
-                            f"<li><b>{upd.author_name}</b> | {format_israel_datetime(upd.created_at)}<br>{upd.content.replace(chr(10), '<br>')}</li>"
-                        )
+                upd_dt = normalize_utc(upd.created_at)
+                if upd_dt and shift_started_at and upd_dt >= shift_started_at:
+                    note_items.append(
+                        f"<li><b>{upd.author_name}</b> | {format_israel_datetime(upd.created_at)}<br>{(upd.content or '').replace(chr(10), '<br>')}</li>"
+                    )
+
             if note_items:
                 pieces.append('<li><b>עדכונים במשמרת זו:</b><ul>' + ''.join(note_items) + '</ul></li>')
+
         if pieces:
             sections.append(f"<h3>{task.title}</h3><ul>{''.join(pieces)}</ul>")
+
     return '<hr>'.join(sections) if sections else '<p>לא נמצאו שינויים במשמרת זו.</p>'
 
 
@@ -608,11 +615,16 @@ def register_routes(app):
         tasks = Task.query.filter_by(assignee_id=current_user.id).order_by(Task.position.asc()).all()
         config = smtp_config_for_user(current_user, settings)
 
+        target_email = config.get('target_email') or settings.employer_email
+        if not target_email:
+            flash('לא מוגדר מייל יעד לקבלת סיכום משמרת.', 'danger')
+            return redirect_dashboard()
+
         body_updates = f"<h2>סיכום שינויים במשמרת - {current_user.full_name}</h2>" + build_shift_updates_html(tasks, shift_started_at)
         body_all = f"<h2>סיכום כללי סוף משמרת - {current_user.full_name}</h2>" + format_task_summary(tasks)
 
-        ok1, msg1 = send_email_async(config, config['target_email'], f'שינויים במשמרת - {current_user.full_name}', body_updates)
-        ok2, msg2 = send_email_async(config, config['target_email'], f'סיכום כללי סוף משמרת - {current_user.full_name}', body_all)
+        ok1, msg1 = send_email_async(config, target_email, f'שינויים במשמרת - {current_user.full_name}', body_updates)
+        ok2, msg2 = send_email_async(config, target_email, f'סיכום כללי סוף משמרת - {current_user.full_name}', body_all)
 
         set_new_shift_start()
 
