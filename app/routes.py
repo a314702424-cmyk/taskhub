@@ -7,7 +7,10 @@ from flask import render_template, request, redirect, url_for, flash, Response, 
 from flask_login import login_user, logout_user, login_required, current_user
 from sqlalchemy import or_
 
-from .models import db, User, Task, TaskUpdate, get_settings, export_all_data, import_all_data
+from .models import (
+    db, User, Task, TaskUpdate, TaskAssignment, SeniorPermission,
+    get_settings, export_all_data, import_all_data
+)
 from .utils import (
     hebrew_date_string,
     build_month_calendar,
@@ -41,16 +44,6 @@ def to_israel_time(dt):
 def format_israel_datetime(dt):
     local_dt = to_israel_time(dt)
     return local_dt.strftime('%d/%m/%Y %H:%M') if local_dt else ''
-
-
-def admin_required(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        if not current_user.is_authenticated or current_user.role != 'admin':
-            flash('אין הרשאה.', 'danger')
-            return redirect(url_for('dashboard'))
-        return func(*args, **kwargs)
-    return wrapper
 
 
 def parse_due_date(raw_value):
@@ -90,17 +83,101 @@ def redirect_dashboard():
     return redirect(url_for('dashboard', **clean))
 
 
+def is_admin():
+    return current_user.is_authenticated and current_user.role == 'admin'
+
+
+def is_senior():
+    return current_user.is_authenticated and current_user.role == 'senior'
+
+
+def get_senior_allowed_ids(user=None):
+    user = user or current_user
+    if not user.is_authenticated or user.role != 'senior':
+        return []
+    return [p.allowed_user_id for p in SeniorPermission.query.filter_by(senior_id=user.id).all()]
+
+
+def can_access_task(task):
+    if current_user.role == 'admin':
+        return True
+    assigned_ids = {a.user_id for a in task.assignments}
+    if task.assignee_id:
+        assigned_ids.add(task.assignee_id)
+    if current_user.role == 'senior':
+        allowed_ids = set(get_senior_allowed_ids())
+        return bool(assigned_ids & allowed_ids) or task.created_by_id == current_user.id
+    return current_user.id in assigned_ids or task.assignee_id == current_user.id
+
+
+def managed_employee_query():
+    q = User.query.filter(User.role == 'employee', User.is_active_user == True)
+    if is_senior():
+        allowed_ids = get_senior_allowed_ids()
+        q = q.filter(User.id.in_(allowed_ids or [-1]))
+    return q.order_by(User.full_name.asc())
+
+
+def admin_or_senior_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.role not in ('admin', 'senior'):
+            flash('אין הרשאה.', 'danger')
+            return redirect(url_for('dashboard'))
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def admin_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.role != 'admin':
+            flash('אין הרשאה.', 'danger')
+            return redirect(url_for('dashboard'))
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def sync_task_assignments(task, user_ids):
+    user_ids = [int(uid) for uid in user_ids if str(uid).isdigit()]
+    user_ids = list(dict.fromkeys(user_ids))
+    if not user_ids:
+        user_ids = [task.assignee_id]
+    primary_user_id = user_ids[0]
+    task.assignee_id = primary_user_id
+    TaskAssignment.query.filter_by(task_id=task.id).delete()
+    db.session.flush()
+    for uid in user_ids:
+        db.session.add(TaskAssignment(task_id=task.id, user_id=uid))
+
+
+def task_recipients(task, settings):
+    recipients = []
+    for user in task.assigned_users:
+        if user.email:
+            recipients.append(user.email.strip())
+        if user.employer_target_email:
+            recipients.append(user.employer_target_email.strip())
+    if settings.employer_email:
+        recipients.append(settings.employer_email.strip())
+    clean = []
+    seen = set()
+    for email in recipients:
+        if email and email not in seen:
+            clean.append(email)
+            seen.add(email)
+    return clean
+
+
 def build_task_notification_body(task, action_label, update_entry=None):
-    assignee_name = task.assignee.full_name if task.assignee else 'לא משויך'
+    assignee_name = task.assigned_names or 'לא משויך'
     creator_name = task.creator.full_name if getattr(task, 'creator', None) else 'לא ידוע'
     due_text = task.due_date.strftime('%d/%m/%Y') if task.due_date else 'ללא תאריך יעד'
     priority = PRIORITY_META.get(task.priority, PRIORITY_META['normal'])
     description_html = (task.description or '').replace(chr(10), '<br>') or 'ללא תיאור'
-
     latest_update_html = ''
     if update_entry is not None:
         latest_update_html = f"<p><b>תוכן העדכון האחרון:</b><br>{(update_entry.content or '').replace(chr(10), '<br>')}</p>"
-
     all_updates_html = ''
     if task.updates:
         all_updates_html = '<p><b>כל העדכונים במשימה:</b></p><ul>'
@@ -110,12 +187,11 @@ def build_task_notification_body(task, action_label, update_entry=None):
                 f"{(upd.content or '').replace(chr(10), '<br>')}</li>"
             )
         all_updates_html += '</ul>'
-
     return f"""<div dir='rtl' style='font-family:Arial,sans-serif;line-height:1.8'>
 <h2>שלום רב,</h2>
 <p>{action_label}</p>
 <p><b>כותרת המשימה:</b> {task.title}</p>
-<p><b>עובד משויך:</b> {assignee_name}</p>
+<p><b>עובדים משויכים:</b> {assignee_name}</p>
 <p><b>נוצרה על ידי:</b> {creator_name}</p>
 <p><b>עדיפות:</b> {priority['icon']} {priority['label']}</p>
 <p><b>תאריך יעד:</b> {due_text}</p>
@@ -137,39 +213,14 @@ def notify_task_change(task, actor, settings, action='new', update_entry=None):
         else:
             subject = 'משימה עודכנה'
             action_label = 'עודכנה משימה קיימת.'
-
-        assignee_user = User.query.get(task.assignee_id) if task.assignee_id else None
-
-        recipients = []
-        if assignee_user and assignee_user.email:
-            recipients.append(assignee_user.email.strip())
-
-        employer_email = ''
-        if assignee_user and assignee_user.employer_target_email:
-            employer_email = assignee_user.employer_target_email.strip()
-        elif settings.employer_email:
-            employer_email = settings.employer_email.strip()
-
-        if employer_email:
-            recipients.append(employer_email)
-
-        clean_recipients = []
-        seen = set()
-        for email in recipients:
-            email = (email or '').strip()
-            if email and email not in seen:
-                clean_recipients.append(email)
-                seen.add(email)
-
-        if not clean_recipients:
+        recipients = task_recipients(task, settings)
+        if not recipients:
             print('TASK EMAIL SKIPPED: no recipients')
             return
-
-        mail_user = assignee_user or actor
+        mail_user = task.assigned_users[0] if task.assigned_users else actor
         config = smtp_config_for_user(mail_user, settings)
         body = build_task_notification_body(task, action_label, update_entry=update_entry)
-
-        for target_email in clean_recipients:
+        for target_email in recipients:
             ok, msg = send_email_async(config, target_email, subject, body)
             print('TASK EMAIL RESULT:', target_email, ok, msg)
     except Exception as exc:
@@ -179,14 +230,11 @@ def notify_task_change(task, actor, settings, action='new', update_entry=None):
 def build_shift_updates_html(tasks, shift_started_at):
     sections = []
     shift_started_at = normalize_utc(shift_started_at)
-
     for task in tasks:
         pieces = []
         task_created_at = normalize_utc(task.created_at)
-
         if task_created_at and shift_started_at and task_created_at >= shift_started_at:
             pieces.append('<li>המשימה נוצרה במשמרת זו</li>')
-
         if task.updates:
             note_items = []
             for upd in task.updates:
@@ -195,13 +243,10 @@ def build_shift_updates_html(tasks, shift_started_at):
                     note_items.append(
                         f"<li><b>{upd.author_name}</b> | {format_israel_datetime(upd.created_at)}<br>{(upd.content or '').replace(chr(10), '<br>')}</li>"
                     )
-
             if note_items:
                 pieces.append('<li><b>עדכונים במשמרת זו:</b><ul>' + ''.join(note_items) + '</ul></li>')
-
         if pieces:
             sections.append(f"<h3>{task.title}</h3><ul>{''.join(pieces)}</ul>")
-
     return '<hr>'.join(sections) if sections else '<p>לא נמצאו שינויים במשמרת זו.</p>'
 
 
@@ -215,7 +260,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V11',
+            'ui_version': 'V12',
             'format_israel_datetime': format_israel_datetime,
         }
 
@@ -251,77 +296,69 @@ def register_routes(app):
         assignee_filter = request.args.get('assignee', '').strip()
         priority_filter = request.args.get('priority', '').strip()
         search_filter = request.args.get('search', '').strip()
-
         session['dashboard_date_filter'] = date_filter
         session['dashboard_assignee_filter'] = assignee_filter
         session['dashboard_priority_filter'] = priority_filter
         session['dashboard_search_filter'] = search_filter
 
         query = Task.query
-        if current_user.role != 'admin':
-            query = query.filter_by(assignee_id=current_user.id)
+        if current_user.role == 'employee':
+            query = query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id == current_user.id, TaskAssignment.user_id == current_user.id))
+        elif current_user.role == 'senior':
+            allowed_ids = get_senior_allowed_ids()
+            query = query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id.in_(allowed_ids or [-1]), TaskAssignment.user_id.in_(allowed_ids or [-1]), Task.created_by_id == current_user.id))
         elif assignee_filter.isdigit():
-            query = query.filter_by(assignee_id=int(assignee_filter))
+            uid = int(assignee_filter)
+            query = query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id == uid, TaskAssignment.user_id == uid))
 
         if date_filter:
             try:
-                query = query.filter_by(due_date=parse_due_date(date_filter))
+                query = query.filter(Task.due_date == parse_due_date(date_filter))
             except ValueError:
                 flash('תאריך הסינון לא תקין.', 'danger')
-
         if priority_filter:
-            query = query.filter_by(priority=priority_filter)
-
+            query = query.filter(Task.priority == priority_filter)
         if search_filter:
             like_value = f"%{search_filter}%"
             query = query.filter(or_(Task.title.ilike(like_value), Task.description.ilike(like_value)))
 
-        tasks = query.order_by(Task.position.asc(), Task.updated_at.desc()).all()
+        tasks = query.distinct().order_by(Task.position.asc(), Task.updated_at.desc()).all()
         users = User.query.filter_by(is_active_user=True).order_by(User.full_name.asc()).all()
-        employee_users = [u for u in users if u.role == 'employee' and u.is_active_user]
+        employee_users = managed_employee_query().all() if current_user.role in ('admin', 'senior') else [current_user]
         selected_employee = None
         if assignee_filter.isdigit():
-            selected_employee = next((u for u in employee_users if u.id == int(assignee_filter)), None)
-
-        return render_template(
-            'dashboard.html',
-            tasks=tasks,
-            users=users,
-            employee_users=employee_users,
-            selected_employee=selected_employee,
-            date_filter=date_filter,
-            assignee_filter=assignee_filter,
-            priority_filter=priority_filter,
-            search_filter=search_filter,
-        )
+            selected_employee = User.query.get(int(assignee_filter))
+        return render_template('dashboard.html', tasks=tasks, users=users, employee_users=employee_users,
+                               selected_employee=selected_employee, date_filter=date_filter,
+                               assignee_filter=assignee_filter, priority_filter=priority_filter,
+                               search_filter=search_filter)
 
     @app.route('/task/create', methods=['POST'])
     @login_required
     def create_task():
-        assignee_id = int(request.form.get('assignee_id') or current_user.id)
-        if current_user.role != 'admin':
-            assignee_id = current_user.id
-
+        selected_ids = request.form.getlist('assignee_ids')
+        if current_user.role == 'employee':
+            selected_ids = [str(current_user.id)]
+        elif current_user.role == 'senior':
+            allowed = {str(x) for x in get_senior_allowed_ids()}
+            selected_ids = [uid for uid in selected_ids if uid in allowed]
+        if not selected_ids:
+            flash('צריך לבחור לפחות עובד אחד למשימה.', 'danger')
+            return redirect_dashboard()
         max_pos = db.session.query(db.func.max(Task.position)).scalar() or 0
-        task = Task(
-            title=request.form.get('title', '').strip(),
-            description=request.form.get('description', '').strip(),
-            priority=request.form.get('priority', 'normal'),
-            assignee_id=assignee_id,
-            created_by_id=current_user.id,
-            position=max_pos + 1,
-            due_date=parse_due_date(request.form.get('due_date') or None),
-        )
-
+        task = Task(title=request.form.get('title', '').strip(),
+                    description=request.form.get('description', '').strip(),
+                    priority=request.form.get('priority', 'normal'),
+                    assignee_id=int(selected_ids[0]), created_by_id=current_user.id,
+                    position=max_pos + 1, due_date=parse_due_date(request.form.get('due_date') or None))
         if not task.title:
             flash('צריך להזין כותרת למשימה.', 'danger')
             return redirect_dashboard()
-
         db.session.add(task)
+        db.session.flush()
+        sync_task_assignments(task, selected_ids)
         db.session.commit()
-
-        settings = get_settings()
-        notify_task_change(task, current_user, settings, action='new')
+        notify_task_change(task, current_user, get_settings(), action='new')
         flash('המשימה נוספה.', 'success')
         return redirect_dashboard()
 
@@ -329,23 +366,23 @@ def register_routes(app):
     @login_required
     def update_task(task_id):
         task = Task.query.get_or_404(task_id)
-        if current_user.role != 'admin' and task.assignee_id != current_user.id:
+        if not can_access_task(task):
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
-
         task.title = request.form.get('title', task.title).strip()
         task.description = request.form.get('description', task.description).strip()
         task.status = request.form.get('status', task.status)
         task.priority = request.form.get('priority', task.priority)
         task.due_date = parse_due_date(request.form.get('due_date') or None)
-
-        if current_user.role == 'admin':
-            task.assignee_id = int(request.form.get('assignee_id') or task.assignee_id)
-
+        if current_user.role in ('admin', 'senior'):
+            selected_ids = request.form.getlist('assignee_ids')
+            if current_user.role == 'senior':
+                allowed = {str(x) for x in get_senior_allowed_ids()}
+                selected_ids = [uid for uid in selected_ids if uid in allowed]
+            if selected_ids:
+                sync_task_assignments(task, selected_ids)
         db.session.commit()
-
-        settings = get_settings()
-        notify_task_change(task, current_user, settings, action='updated')
+        notify_task_change(task, current_user, get_settings(), action='updated')
         flash('המשימה עודכנה.', 'success')
         return redirect_dashboard()
 
@@ -353,10 +390,9 @@ def register_routes(app):
     @login_required
     def delete_task(task_id):
         task = Task.query.get_or_404(task_id)
-        if current_user.role != 'admin' and task.assignee_id != current_user.id:
+        if not can_access_task(task):
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
-
         db.session.delete(task)
         db.session.commit()
         flash('המשימה נמחקה.', 'success')
@@ -366,25 +402,19 @@ def register_routes(app):
     @login_required
     def add_note(task_id):
         task = Task.query.get_or_404(task_id)
-        if current_user.role != 'admin' and task.assignee_id != current_user.id:
+        if not can_access_task(task):
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
-
         content = request.form.get('content', '').strip()
         if not content:
             flash('אין תוכן לעדכון.', 'danger')
             return redirect_dashboard()
-
         stamp = format_israel_datetime(utc_now())
-        content_with_stamp = f"[{stamp}]\n{content}"
-        note = TaskUpdate(task_id=task.id, content=content_with_stamp, author_name=current_user.full_name)
-
+        note = TaskUpdate(task_id=task.id, content=f"[{stamp}]\n{content}", author_name=current_user.full_name)
         db.session.add(note)
         task.updated_at = utc_now()
         db.session.commit()
-
-        settings = get_settings()
-        notify_task_change(task, current_user, settings, action='note', update_entry=note)
+        notify_task_change(task, current_user, get_settings(), action='note', update_entry=note)
         flash('העדכון נשמר ונשלח.', 'success')
         return redirect_dashboard()
 
@@ -393,24 +423,19 @@ def register_routes(app):
     def move_task(task_id):
         task = Task.query.get_or_404(task_id)
         direction = request.form.get('direction')
-
-        if current_user.role != 'admin' and task.assignee_id != current_user.id:
+        if not can_access_task(task):
             flash('אין הרשאה.', 'danger')
             return redirect_dashboard()
-
         query = Task.query
-        if current_user.role != 'admin':
+        if current_user.role == 'employee':
             query = query.filter_by(assignee_id=current_user.id)
-
-        if direction == 'up':
-            other = query.filter(Task.position < task.position).order_by(Task.position.desc()).first()
-        else:
-            other = query.filter(Task.position > task.position).order_by(Task.position.asc()).first()
-
+        elif current_user.role == 'senior':
+            allowed = get_senior_allowed_ids()
+            query = query.filter(Task.assignee_id.in_(allowed or [-1]))
+        other = query.filter(Task.position < task.position).order_by(Task.position.desc()).first() if direction == 'up' else query.filter(Task.position > task.position).order_by(Task.position.asc()).first()
         if other:
             task.position, other.position = other.position, task.position
             db.session.commit()
-
         return redirect_dashboard()
 
     @app.route('/calendar')
@@ -419,15 +444,15 @@ def register_routes(app):
         month = int(request.args.get('month', date.today().month))
         year = int(request.args.get('year', date.today().year))
         q = Task.query.filter(Task.due_date.isnot(None))
-        if current_user.role != 'admin':
-            q = q.filter_by(assignee_id=current_user.id)
-        tasks = q.all()
-
+        if current_user.role == 'employee':
+            q = q.outerjoin(TaskAssignment).filter(or_(Task.assignee_id == current_user.id, TaskAssignment.user_id == current_user.id))
+        elif current_user.role == 'senior':
+            allowed = get_senior_allowed_ids()
+            q = q.outerjoin(TaskAssignment).filter(or_(Task.assignee_id.in_(allowed or [-1]), TaskAssignment.user_id.in_(allowed or [-1])))
+        tasks = q.distinct().all()
         tasks_by_date = {}
         for task in tasks:
-            key = task.due_date.isoformat()
-            tasks_by_date.setdefault(key, []).append(task)
-
+            tasks_by_date.setdefault(task.due_date.isoformat(), []).append(task)
         weeks = build_month_calendar(year, month, tasks_by_date)
         return render_template('calendar.html', weeks=weeks, month=month, year=year)
 
@@ -458,13 +483,8 @@ def register_routes(app):
     @login_required
     @admin_required
     def export_settings():
-        settings = get_settings().to_dict()
-        data = json.dumps(settings, ensure_ascii=False, indent=2)
-        return Response(
-            data,
-            mimetype='application/json',
-            headers={'Content-Disposition': 'attachment; filename=settings_backup.json'}
-        )
+        data = json.dumps(get_settings().to_dict(), ensure_ascii=False, indent=2)
+        return Response(data, mimetype='application/json', headers={'Content-Disposition': 'attachment; filename=settings_backup.json'})
 
     @app.route('/settings/import', methods=['POST'])
     @login_required
@@ -475,9 +495,7 @@ def register_routes(app):
             flash('לא נבחר קובץ.', 'danger')
             return redirect(url_for('settings_page'))
         try:
-            payload = json.load(file)
-            settings = get_settings()
-            settings.apply_dict(payload)
+            get_settings().apply_dict(json.load(file))
             db.session.commit()
             flash('ההגדרות יובאו בהצלחה.', 'success')
         except Exception as exc:
@@ -489,14 +507,9 @@ def register_routes(app):
     @login_required
     @admin_required
     def export_all_backup():
-        payload = export_all_data()
-        data = json.dumps(payload, ensure_ascii=False, indent=2)
+        data = json.dumps(export_all_data(), ensure_ascii=False, indent=2)
         filename = f"taskhub_full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        return Response(
-            data,
-            mimetype='application/json',
-            headers={'Content-Disposition': f'attachment; filename={filename}'}
-        )
+        return Response(data, mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}'})
 
     @app.route('/backup/import-all', methods=['POST'])
     @login_required
@@ -507,9 +520,8 @@ def register_routes(app):
             flash('לא נבחר קובץ גיבוי מלא.', 'danger')
             return redirect(url_for('settings_page'))
         try:
-            payload = json.load(file)
-            import_all_data(payload)
-            flash('כל הנתונים יובאו בהצלחה: הגדרות, עובדים, משימות והיסטוריית עדכונים.', 'success')
+            import_all_data(json.load(file))
+            flash('כל הנתונים יובאו בהצלחה.', 'success')
         except Exception as exc:
             db.session.rollback()
             flash(f'שגיאה בייבוא הגיבוי המלא: {exc}', 'danger')
@@ -527,30 +539,28 @@ def register_routes(app):
             if User.query.filter_by(username=username).first():
                 flash('שם המשתמש כבר קיים.', 'danger')
                 return redirect(url_for('users_page'))
-
-            user = User(
-                username=username,
-                full_name=request.form.get('full_name', '').strip(),
-                email=request.form.get('email', '').strip(),
-                role=request.form.get('role', 'employee'),
-                is_active_user=True,
-                smtp_host=request.form.get('smtp_host', '').strip(),
-                smtp_port=int(request.form.get('smtp_port') or 587),
-                smtp_username=request.form.get('smtp_username', '').strip(),
-                smtp_password=request.form.get('smtp_password', '').strip(),
-                sender_email=request.form.get('sender_email', '').strip(),
-                employer_target_email=request.form.get('employer_target_email', '').strip(),
-                theme_color=request.form.get('theme_color', '#1a73e8').strip() or '#1a73e8',
-            )
-            password = request.form.get('password', '').strip() or '123456'
-            user.set_password(password)
+            user = User(username=username, full_name=request.form.get('full_name', '').strip(),
+                        email=request.form.get('email', '').strip(), role=request.form.get('role', 'employee'),
+                        is_active_user=True, smtp_host=request.form.get('smtp_host', '').strip(),
+                        smtp_port=int(request.form.get('smtp_port') or 587),
+                        smtp_username=request.form.get('smtp_username', '').strip(),
+                        smtp_password=request.form.get('smtp_password', '').strip(),
+                        sender_email=request.form.get('sender_email', '').strip(),
+                        employer_target_email=request.form.get('employer_target_email', '').strip(),
+                        theme_color=request.form.get('theme_color', '#1a73e8').strip() or '#1a73e8')
+            user.set_password(request.form.get('password', '').strip() or '123456')
             db.session.add(user)
+            db.session.flush()
+            if user.role == 'senior':
+                for allowed_id in request.form.getlist('allowed_user_ids'):
+                    if str(allowed_id).isdigit():
+                        db.session.add(SeniorPermission(senior_id=user.id, allowed_user_id=int(allowed_id)))
             db.session.commit()
             flash('המשתמש נוסף.', 'success')
             return redirect(url_for('users_page'))
-
         users = User.query.order_by(User.role.desc(), User.full_name.asc()).all()
-        return render_template('users.html', users=users)
+        employee_users = User.query.filter(User.role == 'employee', User.is_active_user == True).order_by(User.full_name.asc()).all()
+        return render_template('users.html', users=users, employee_users=employee_users)
 
     @app.route('/users/<int:user_id>/edit', methods=['POST'])
     @login_required
@@ -562,7 +572,6 @@ def register_routes(app):
         if existing and existing.id != user.id:
             flash('שם המשתמש כבר קיים.', 'danger')
             return redirect(url_for('users_page'))
-
         user.username = username
         user.full_name = request.form.get('full_name', '').strip()
         user.email = request.form.get('email', '').strip()
@@ -574,6 +583,11 @@ def register_routes(app):
         user.sender_email = request.form.get('sender_email', '').strip()
         user.employer_target_email = request.form.get('employer_target_email', '').strip()
         user.theme_color = request.form.get('theme_color', '#1a73e8').strip() or '#1a73e8'
+        SeniorPermission.query.filter_by(senior_id=user.id).delete()
+        if user.role == 'senior':
+            for allowed_id in request.form.getlist('allowed_user_ids'):
+                if str(allowed_id).isdigit():
+                    db.session.add(SeniorPermission(senior_id=user.id, allowed_user_id=int(allowed_id)))
         db.session.commit()
         flash('פרטי המשתמש עודכנו.', 'success')
         return redirect(url_for('users_page'))
@@ -586,7 +600,6 @@ def register_routes(app):
         if user.username == 'admin':
             flash('לא ניתן להשבית את admin.', 'danger')
             return redirect(url_for('users_page'))
-
         user.is_active_user = not user.is_active_user
         db.session.commit()
         flash('המשתמש עודכן.', 'success')
@@ -601,7 +614,6 @@ def register_routes(app):
         if not new_password:
             flash('צריך להזין סיסמה חדשה.', 'danger')
             return redirect(url_for('users_page'))
-
         user.set_password(new_password)
         db.session.commit()
         flash('הסיסמה עודכנה.', 'success')
@@ -612,29 +624,26 @@ def register_routes(app):
     def end_shift():
         settings = get_settings()
         shift_started_at = get_shift_started_at()
-        tasks = Task.query.filter_by(assignee_id=current_user.id).order_by(Task.position.asc()).all()
+        if current_user.role == 'employee':
+            tasks = Task.query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id == current_user.id, TaskAssignment.user_id == current_user.id)).distinct().order_by(Task.position.asc()).all()
+        elif current_user.role == 'senior':
+            allowed = get_senior_allowed_ids()
+            tasks = Task.query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id.in_(allowed or [-1]), TaskAssignment.user_id.in_(allowed or [-1]), Task.created_by_id == current_user.id)).distinct().order_by(Task.position.asc()).all()
+        else:
+            tasks = Task.query.order_by(Task.position.asc()).all()
         config = smtp_config_for_user(current_user, settings)
-
         target_email = config.get('target_email') or settings.employer_email
         if not target_email:
             flash('לא מוגדר מייל יעד לקבלת סיכום משמרת.', 'danger')
             return redirect_dashboard()
-
         body_updates = f"<h2>סיכום שינויים במשמרת - {current_user.full_name}</h2>" + build_shift_updates_html(tasks, shift_started_at)
         body_all = f"<h2>סיכום כללי סוף משמרת - {current_user.full_name}</h2>" + format_task_summary(tasks)
-
         ok1, msg1 = send_email_async(config, target_email, f'שינויים במשמרת - {current_user.full_name}', body_updates)
         ok2, msg2 = send_email_async(config, target_email, f'סיכום כללי סוף משמרת - {current_user.full_name}', body_all)
-
         set_new_shift_start()
-
-        if ok1 and ok2:
-            flash('נשלחו שני דוחות: שינויים במשמרת ודוח כללי.', 'success')
-        else:
-            flash(f'חלק מהשליחה נכשלה: {msg1} | {msg2}', 'danger')
-
+        flash('נשלחו שני דוחות: שינויים במשמרת ודוח כללי.' if ok1 and ok2 else f'חלק מהשליחה נכשלה: {msg1} | {msg2}', 'success' if ok1 and ok2 else 'danger')
         return redirect_dashboard()
 
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v11'}
+        return {'ok': True, 'version': 'v12'}

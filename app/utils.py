@@ -129,7 +129,7 @@ def format_task_summary(tasks):
         priority = PRIORITY_META.get(task.priority, PRIORITY_META['normal'])
         lines = [
             f"<h3>{task.title}</h3>",
-            f"<p><b>עובד:</b> {task.assignee.full_name}<br><b>סטטוס:</b> {STATUS_META.get(task.status, task.status)}<br><b>עדיפות:</b> {priority['icon']} {priority['label']}<br><b>עדכון אחרון:</b> {task.updated_at.strftime('%d/%m/%Y %H:%M')}</p>",
+            f"<p><b>עובדים:</b> {getattr(task, 'assigned_names', task.assignee.full_name if task.assignee else '')}<br><b>סטטוס:</b> {STATUS_META.get(task.status, task.status)}<br><b>עדיפות:</b> {priority['icon']} {priority['label']}<br><b>עדכון אחרון:</b> {task.updated_at.strftime('%d/%m/%Y %H:%M')}</p>",
             f"<p><b>תיאור:</b><br>{(task.description or '').replace(chr(10), '<br>')}</p>",
         ]
         if task.updates:

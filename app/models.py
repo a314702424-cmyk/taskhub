@@ -13,7 +13,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     full_name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(255), default='')
-    role = db.Column(db.String(20), default='employee')
+    role = db.Column(db.String(20), default='employee')  # admin / senior / employee
     is_active_user = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -28,6 +28,9 @@ class User(UserMixin, db.Model):
     tasks = db.relationship('Task', backref='assignee', lazy=True, foreign_keys='Task.assignee_id')
     created_tasks = db.relationship('Task', backref='creator', lazy=True, foreign_keys='Task.created_by_id')
 
+    task_assignments = db.relationship('TaskAssignment', back_populates='user', cascade='all, delete-orphan')
+    senior_permissions = db.relationship('SeniorPermission', foreign_keys='SeniorPermission.senior_id', cascade='all, delete-orphan')
+
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
 
@@ -38,7 +41,16 @@ class User(UserMixin, db.Model):
     def display_sender_email(self):
         return self.sender_email or self.email or self.smtp_username
 
+    @property
+    def role_label(self):
+        return {'admin': 'מנהל', 'senior': 'משתמש בכיר', 'employee': 'עובד'}.get(self.role, self.role)
+
     def to_dict(self, include_sensitive=True):
+        allowed_usernames = []
+        if self.role == 'senior':
+            for permission in self.senior_permissions:
+                if permission.allowed_user:
+                    allowed_usernames.append(permission.allowed_user.username)
         data = {
             'username': self.username,
             'full_name': self.full_name,
@@ -51,10 +63,39 @@ class User(UserMixin, db.Model):
             'sender_email': self.sender_email,
             'employer_target_email': self.employer_target_email,
             'theme_color': self.theme_color,
+            'senior_allowed_usernames': allowed_usernames,
         }
         if include_sensitive:
             data['smtp_password'] = self.smtp_password
         return data
+
+
+class TaskAssignment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('task.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    task = db.relationship('Task', back_populates='assignments')
+    user = db.relationship('User', back_populates='task_assignments')
+
+    __table_args__ = (
+        db.UniqueConstraint('task_id', 'user_id', name='uq_task_assignment_task_user'),
+    )
+
+
+class SeniorPermission(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    senior_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    allowed_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    senior = db.relationship('User', foreign_keys=[senior_id])
+    allowed_user = db.relationship('User', foreign_keys=[allowed_user_id])
+
+    __table_args__ = (
+        db.UniqueConstraint('senior_id', 'allowed_user_id', name='uq_senior_allowed_user'),
+    )
 
 
 class Task(db.Model):
@@ -70,6 +111,7 @@ class Task(db.Model):
     assignee_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
+    assignments = db.relationship('TaskAssignment', back_populates='task', lazy=True, cascade='all, delete-orphan')
     updates = db.relationship(
         'TaskUpdate',
         backref='task',
@@ -77,6 +119,17 @@ class Task(db.Model):
         cascade='all, delete-orphan',
         order_by='TaskUpdate.created_at.desc()'
     )
+
+    @property
+    def assigned_users(self):
+        users = [a.user for a in self.assignments if a.user]
+        if not users and self.assignee:
+            users = [self.assignee]
+        return users
+
+    @property
+    def assigned_names(self):
+        return ', '.join([u.full_name for u in self.assigned_users]) or (self.assignee.full_name if self.assignee else '')
 
     def to_dict(self):
         return {
@@ -87,6 +140,7 @@ class Task(db.Model):
             'position': self.position,
             'due_date': self.due_date.isoformat() if self.due_date else None,
             'assignee_username': self.assignee.username if self.assignee else None,
+            'assigned_usernames': [u.username for u in self.assigned_users],
             'created_by_username': self.creator.username if self.creator else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -178,12 +232,19 @@ def ensure_sqlite_columns():
         conn.commit()
 
 
+def ensure_default_assignments():
+    for task in Task.query.all():
+        if task.assignee_id and not TaskAssignment.query.filter_by(task_id=task.id, user_id=task.assignee_id).first():
+            db.session.add(TaskAssignment(task_id=task.id, user_id=task.assignee_id))
+    db.session.commit()
+
+
 def export_all_data():
     settings = get_settings().to_dict()
     users = [u.to_dict(include_sensitive=True) for u in User.query.order_by(User.id.asc()).all() if u.username != 'admin']
     tasks = [t.to_dict() for t in Task.query.order_by(Task.position.asc(), Task.id.asc()).all()]
     return {
-        'version': 11,
+        'version': 12,
         'exported_at': datetime.utcnow().isoformat(),
         'settings': settings,
         'users': users,
@@ -195,6 +256,8 @@ def import_all_data(payload: dict):
     settings = get_settings()
     settings.apply_dict(payload.get('settings') or {})
 
+    SeniorPermission.query.delete()
+    TaskAssignment.query.delete()
     for task in Task.query.all():
         db.session.delete(task)
     for user in User.query.filter(User.username != 'admin').all():
@@ -208,6 +271,7 @@ def import_all_data(payload: dict):
         admin.sender_email = settings.smtp_sender or settings.employer_email or admin.sender_email
         username_map['admin'] = admin
 
+    pending_permissions = []
     for row in payload.get('users') or []:
         username = (row.get('username') or '').strip()
         if not username:
@@ -230,9 +294,19 @@ def import_all_data(payload: dict):
         db.session.add(user)
         db.session.flush()
         username_map[user.username] = user
+        pending_permissions.append((user, row.get('senior_allowed_usernames') or []))
+
+    for senior, allowed_names in pending_permissions:
+        if senior.role != 'senior':
+            continue
+        for allowed_name in allowed_names:
+            allowed_user = username_map.get(allowed_name)
+            if allowed_user:
+                db.session.add(SeniorPermission(senior_id=senior.id, allowed_user_id=allowed_user.id))
 
     for row in payload.get('tasks') or []:
-        assignee = username_map.get(row.get('assignee_username')) or admin
+        assigned_names = row.get('assigned_usernames') or []
+        assignee = username_map.get(row.get('assignee_username')) or (username_map.get(assigned_names[0]) if assigned_names else None) or admin
         creator = username_map.get(row.get('created_by_username')) or admin or assignee
         if not assignee:
             continue
@@ -250,6 +324,11 @@ def import_all_data(payload: dict):
         )
         db.session.add(task)
         db.session.flush()
+        final_assigned_names = assigned_names or ([assignee.username] if assignee else [])
+        for username in final_assigned_names:
+            user = username_map.get(username)
+            if user:
+                db.session.add(TaskAssignment(task_id=task.id, user_id=user.id))
         for upd in row.get('updates') or []:
             note = TaskUpdate(
                 task_id=task.id,
@@ -275,3 +354,4 @@ def ensure_default_data():
         admin.set_password('admin123')
         db.session.add(admin)
         db.session.commit()
+    ensure_default_assignments()

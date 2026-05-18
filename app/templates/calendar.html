@@ -28,7 +28,7 @@
         </div>
         <div class="mt-2 d-grid gap-2">
           {% for task in day.tasks %}
-            <a class="badge text-bg-light text-start p-2 text-decoration-none" href="{{ url_for('dashboard', date=day.date.isoformat()) }}">{{ priority_meta[task.priority].icon }} {{ task.title }}<br><span class="tiny">{{ task.assignee.full_name }}</span></a>
+            <a class="badge text-bg-light text-start p-2 text-decoration-none" href="{{ url_for('dashboard', date=day.date.isoformat()) }}">{{ priority_meta[task.priority].icon }} {{ task.title }}<br><span class="tiny">{{ task.assigned_names }}</span></a>
           {% endfor %}
         </div>
       </td>
