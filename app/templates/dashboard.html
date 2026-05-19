@@ -27,7 +27,7 @@
     <div class="col-lg-3"><label class="form-label fw-bold">חיפוש משימה</label><input type="text" class="form-control" name="search" value="{{ search_filter }}" placeholder="חיפוש בכותרת או בתיאור"></div>
     <div class="col-lg-3"><label class="form-label fw-bold">סינון לפי תאריך יעד</label><input type="date" class="form-control" name="date" value="{{ date_filter }}"></div>
     <div class="col-lg-3"><label class="form-label fw-bold">סינון לפי עדיפות</label><select class="form-select" name="priority"><option value="">כל הרמות</option>{% for key, meta in priority_meta.items() %}<option value="{{ key }}" {% if priority_filter == key %}selected{% endif %}>{{ meta.icon }} {{ meta.label }}</option>{% endfor %}</select></div>
-    {% if current_user.role == 'admin' %}
+    {% if current_user.role in ['admin','senior'] %}
     <div class="col-lg-3"><label class="form-label fw-bold">צפייה במשימות של עובד</label><select class="form-select" name="assignee"><option value="">כל העובדים</option>{% for user in employee_users %}<option value="{{ user.id }}" {% if assignee_filter == (user.id|string) %}selected{% endif %}>{{ user.full_name }}</option>{% endfor %}</select></div>
     {% endif %}
     <div class="col-12 d-flex gap-2 flex-wrap"><button class="btn btn-primary">סנן</button><a class="btn btn-soft" href="{{ url_for('dashboard') }}">נקה סינונים</a></div>

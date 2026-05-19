@@ -92,22 +92,40 @@ def is_senior():
 
 
 def get_senior_allowed_ids(user=None):
+    """Return employee IDs that a senior user is allowed to manage.
+
+    Important: this function must work both for current_user and for regular
+    User model instances loaded from the database. A database User object is not
+    always the same proxy object as current_user, so we must not rely on
+    is_authenticated here.
+    """
     user = user or current_user
-    if not user.is_authenticated or user.role != 'senior':
+    if not user or getattr(user, 'role', None) != 'senior':
         return []
-    return [p.allowed_user_id for p in SeniorPermission.query.filter_by(senior_id=user.id).all()]
+    return [
+        p.allowed_user_id
+        for p in SeniorPermission.query.filter_by(senior_id=user.id).all()
+    ]
+
+
+def get_task_assigned_ids(task):
+    assigned_ids = {a.user_id for a in task.assignments if a.user_id}
+    if task.assignee_id:
+        assigned_ids.add(task.assignee_id)
+    return assigned_ids
 
 
 def can_access_task(task):
     if current_user.role == 'admin':
         return True
-    assigned_ids = {a.user_id for a in task.assignments}
-    if task.assignee_id:
-        assigned_ids.add(task.assignee_id)
+
+    assigned_ids = get_task_assigned_ids(task)
+
     if current_user.role == 'senior':
         allowed_ids = set(get_senior_allowed_ids())
         return bool(assigned_ids & allowed_ids) or task.created_by_id == current_user.id
-    return current_user.id in assigned_ids or task.assignee_id == current_user.id
+
+    return current_user.id in assigned_ids
 
 
 def managed_employee_query():
@@ -139,16 +157,32 @@ def admin_required(func):
 
 
 def sync_task_assignments(task, user_ids):
-    user_ids = [int(uid) for uid in user_ids if str(uid).isdigit()]
-    user_ids = list(dict.fromkeys(user_ids))
-    if not user_ids:
-        user_ids = [task.assignee_id]
-    primary_user_id = user_ids[0]
-    task.assignee_id = primary_user_id
+    """Replace all assignees for a task and keep legacy assignee_id in sync.
+
+    The app still keeps assignee_id for backwards compatibility, but the real
+    source for multi-assignment is TaskAssignment.
+    """
+    clean_ids = []
+    for uid in user_ids or []:
+        if str(uid).isdigit():
+            clean_ids.append(int(uid))
+    clean_ids = list(dict.fromkeys(clean_ids))
+
+    if not clean_ids and task.assignee_id:
+        clean_ids = [int(task.assignee_id)]
+
+    if not clean_ids:
+        return []
+
+    task.assignee_id = clean_ids[0]
     TaskAssignment.query.filter_by(task_id=task.id).delete()
     db.session.flush()
-    for uid in user_ids:
+
+    for uid in clean_ids:
         db.session.add(TaskAssignment(task_id=task.id, user_id=uid))
+
+    print('TASK ASSIGNMENTS SYNC:', task.id, clean_ids)
+    return clean_ids
 
 
 def task_recipients(task, settings):
@@ -167,6 +201,43 @@ def task_recipients(task, settings):
             clean.append(email)
             seen.add(email)
     return clean
+
+
+def mail_config_is_complete(config):
+    return all([
+        config.get('smtp_host'),
+        config.get('smtp_port'),
+        config.get('smtp_username'),
+        config.get('smtp_password'),
+        config.get('smtp_sender'),
+    ])
+
+
+def choose_mail_config(actor, task, settings):
+    """Pick a working SMTP config.
+
+    Prefer the actor so worker comments can be sent from the worker when configured.
+    If the actor is missing SMTP settings, fall back to assigned users and then
+    to the global/admin settings.
+    """
+    candidates = []
+    if actor:
+        candidates.append(actor)
+    candidates.extend([u for u in task.assigned_users if u])
+    admin_user = User.query.filter_by(role='admin').first()
+    if admin_user:
+        candidates.append(admin_user)
+
+    seen = set()
+    for user in candidates:
+        if not user or user.id in seen:
+            continue
+        seen.add(user.id)
+        config = smtp_config_for_user(user, settings)
+        if mail_config_is_complete(config):
+            return config
+
+    return smtp_config_for_user(actor or admin_user or (task.assigned_users[0] if task.assigned_users else None), settings)
 
 
 def build_task_notification_body(task, action_label, update_entry=None):
@@ -213,16 +284,30 @@ def notify_task_change(task, actor, settings, action='new', update_entry=None):
         else:
             subject = 'משימה עודכנה'
             action_label = 'עודכנה משימה קיימת.'
+
+        # Make sure relationship data is fresh after create/update sync.
+        try:
+            db.session.flush()
+            db.session.expire(task, ['assignments'])
+        except Exception:
+            pass
+
         recipients = task_recipients(task, settings)
+        assigned_ids = sorted(list(get_task_assigned_ids(task)))
+        print('TASK NOTIFY ASSIGNED IDS:', task.id, assigned_ids)
+        print('TASK NOTIFY RECIPIENTS:', recipients)
+
         if not recipients:
             print('TASK EMAIL SKIPPED: no recipients')
             return
-        mail_user = task.assigned_users[0] if task.assigned_users else actor
-        config = smtp_config_for_user(mail_user, settings)
+
+        config = choose_mail_config(actor, task, settings)
         body = build_task_notification_body(task, action_label, update_entry=update_entry)
+
         for target_email in recipients:
             ok, msg = send_email_async(config, target_email, subject, body)
             print('TASK EMAIL RESULT:', target_email, ok, msg)
+
     except Exception as exc:
         print('TASK EMAIL ERROR:', str(exc))
 
@@ -260,7 +345,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V13',
+            'ui_version': 'V14',
             'format_israel_datetime': format_israel_datetime,
         }
 
@@ -303,10 +388,21 @@ def register_routes(app):
 
         query = Task.query
         if current_user.role == 'employee':
-            query = query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id == current_user.id, TaskAssignment.user_id == current_user.id))
+            query = query.outerjoin(TaskAssignment).filter(
+                or_(Task.assignee_id == current_user.id, TaskAssignment.user_id == current_user.id)
+            )
         elif current_user.role == 'senior':
             allowed_ids = get_senior_allowed_ids()
-            query = query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id.in_(allowed_ids or [-1]), TaskAssignment.user_id.in_(allowed_ids or [-1]), Task.created_by_id == current_user.id))
+            query = query.outerjoin(TaskAssignment)
+            if assignee_filter.isdigit() and int(assignee_filter) in set(allowed_ids):
+                uid = int(assignee_filter)
+                query = query.filter(or_(Task.assignee_id == uid, TaskAssignment.user_id == uid))
+            else:
+                query = query.filter(or_(
+                    Task.assignee_id.in_(allowed_ids or [-1]),
+                    TaskAssignment.user_id.in_(allowed_ids or [-1]),
+                    Task.created_by_id == current_user.id
+                ))
         elif assignee_filter.isdigit():
             uid = int(assignee_filter)
             query = query.outerjoin(TaskAssignment).filter(or_(Task.assignee_id == uid, TaskAssignment.user_id == uid))
@@ -337,11 +433,13 @@ def register_routes(app):
     @login_required
     def create_task():
         selected_ids = request.form.getlist('assignee_ids')
+        print('TASK CREATE POSTED ASSIGNEE IDS:', selected_ids, 'BY', current_user.id, current_user.role)
         if current_user.role == 'employee':
             selected_ids = [str(current_user.id)]
         elif current_user.role == 'senior':
             allowed = {str(x) for x in get_senior_allowed_ids()}
-            selected_ids = [uid for uid in selected_ids if uid in allowed]
+            selected_ids = [str(uid) for uid in selected_ids if str(uid) in allowed]
+            print('TASK CREATE SENIOR ALLOWED:', sorted(list(allowed)), 'FILTERED:', selected_ids)
         if not selected_ids:
             flash('צריך לבחור לפחות עובד אחד למשימה.', 'danger')
             return redirect_dashboard()
@@ -376,9 +474,11 @@ def register_routes(app):
         task.due_date = parse_due_date(request.form.get('due_date') or None)
         if current_user.role in ('admin', 'senior'):
             selected_ids = request.form.getlist('assignee_ids')
+            print('TASK UPDATE POSTED ASSIGNEE IDS:', task.id, selected_ids, 'BY', current_user.id, current_user.role)
             if current_user.role == 'senior':
                 allowed = {str(x) for x in get_senior_allowed_ids()}
-                selected_ids = [uid for uid in selected_ids if uid in allowed]
+                selected_ids = [str(uid) for uid in selected_ids if str(uid) in allowed]
+                print('TASK UPDATE SENIOR ALLOWED:', sorted(list(allowed)), 'FILTERED:', selected_ids)
             if selected_ids:
                 sync_task_assignments(task, selected_ids)
         db.session.commit()
@@ -428,10 +528,14 @@ def register_routes(app):
             return redirect_dashboard()
         query = Task.query
         if current_user.role == 'employee':
-            query = query.filter_by(assignee_id=current_user.id)
+            query = query.outerjoin(TaskAssignment).filter(
+                or_(Task.assignee_id == current_user.id, TaskAssignment.user_id == current_user.id)
+            )
         elif current_user.role == 'senior':
             allowed = get_senior_allowed_ids()
-            query = query.filter(Task.assignee_id.in_(allowed or [-1]))
+            query = query.outerjoin(TaskAssignment).filter(
+                or_(Task.assignee_id.in_(allowed or [-1]), TaskAssignment.user_id.in_(allowed or [-1]))
+            )
         other = query.filter(Task.position < task.position).order_by(Task.position.desc()).first() if direction == 'up' else query.filter(Task.position > task.position).order_by(Task.position.asc()).first()
         if other:
             task.position, other.position = other.position, task.position
@@ -552,7 +656,9 @@ def register_routes(app):
             db.session.add(user)
             db.session.flush()
             if user.role == 'senior':
-                for allowed_id in request.form.getlist('allowed_user_ids'):
+                allowed_ids = request.form.getlist('allowed_user_ids')
+                print('SENIOR CREATE ALLOWED IDS:', user.id, allowed_ids)
+                for allowed_id in allowed_ids:
                     if str(allowed_id).isdigit():
                         db.session.add(SeniorPermission(senior_id=user.id, allowed_user_id=int(allowed_id)))
             db.session.commit()
@@ -585,7 +691,9 @@ def register_routes(app):
         user.theme_color = request.form.get('theme_color', '#1a73e8').strip() or '#1a73e8'
         SeniorPermission.query.filter_by(senior_id=user.id).delete()
         if user.role == 'senior':
-            for allowed_id in request.form.getlist('allowed_user_ids'):
+            allowed_ids = request.form.getlist('allowed_user_ids')
+            print('SENIOR EDIT ALLOWED IDS:', user.id, allowed_ids)
+            for allowed_id in allowed_ids:
                 if str(allowed_id).isdigit():
                     db.session.add(SeniorPermission(senior_id=user.id, allowed_user_id=int(allowed_id)))
         db.session.commit()
@@ -662,9 +770,9 @@ def register_routes(app):
     def v12_status():
         stats = ensure_v12_integrity()
         stats['ok'] = True
-        stats['version'] = 'v13'
+        stats['version'] = 'v14'
         return stats
 
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v13', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}
+        return {'ok': True, 'version': 'v14', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}

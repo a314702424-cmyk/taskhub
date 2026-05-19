@@ -274,7 +274,7 @@ def export_all_data():
     users = [u.to_dict(include_sensitive=True) for u in User.query.order_by(User.id.asc()).all() if u.username != 'admin']
     tasks = [t.to_dict() for t in Task.query.order_by(Task.position.asc(), Task.id.asc()).all()]
     return {
-        'version': 13,
+        'version': 14,
         'exported_at': datetime.utcnow().isoformat(),
         'settings': settings,
         'users': users,

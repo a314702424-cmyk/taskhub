@@ -39,9 +39,9 @@ def create_app():
         ensure_default_data()
         try:
             stats = ensure_v12_integrity()
-            print('TASKHUB V13 INTEGRITY READY:', stats)
+            print('TASKHUB V14 INTEGRITY READY:', stats)
         except Exception as exc:
             db.session.rollback()
-            print('TASKHUB V13 INTEGRITY ERROR:', exc)
+            print('TASKHUB V14 INTEGRITY ERROR:', exc)
 
     return app
