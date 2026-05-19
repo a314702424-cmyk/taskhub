@@ -29,7 +29,12 @@ class User(UserMixin, db.Model):
     created_tasks = db.relationship('Task', backref='creator', lazy=True, foreign_keys='Task.created_by_id')
 
     task_assignments = db.relationship('TaskAssignment', back_populates='user', cascade='all, delete-orphan')
-    senior_permissions = db.relationship('SeniorPermission', foreign_keys='SeniorPermission.senior_id', cascade='all, delete-orphan')
+    senior_permissions = db.relationship(
+        'SeniorPermission',
+        foreign_keys='SeniorPermission.senior_id',
+        cascade='all, delete-orphan',
+        overlaps='senior'
+    )
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -90,7 +95,7 @@ class SeniorPermission(db.Model):
     allowed_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    senior = db.relationship('User', foreign_keys=[senior_id])
+    senior = db.relationship('User', foreign_keys=[senior_id], overlaps='senior_permissions')
     allowed_user = db.relationship('User', foreign_keys=[allowed_user_id])
 
     __table_args__ = (
@@ -233,10 +238,35 @@ def ensure_sqlite_columns():
 
 
 def ensure_default_assignments():
+    """Backfill TaskAssignment rows for old tasks that only had assignee_id.
+
+    Returns (created_count, total_count) so Render logs can prove the migration ran.
+    Safe to run on every app start.
+    """
+    created = 0
     for task in Task.query.all():
         if task.assignee_id and not TaskAssignment.query.filter_by(task_id=task.id, user_id=task.assignee_id).first():
             db.session.add(TaskAssignment(task_id=task.id, user_id=task.assignee_id))
+            created += 1
     db.session.commit()
+    return created, TaskAssignment.query.count()
+
+
+def ensure_v12_integrity():
+    """Create missing V12 tables and backfill assignment rows.
+
+    This is intentionally safe to run repeatedly and is also exposed from
+    /admin/repair-v12 because Render Shell/One-Off Jobs are not always available.
+    """
+    db.create_all()
+    created, total = ensure_default_assignments()
+    return {
+        'created_assignments': created,
+        'assignments_total': total,
+        'senior_permissions_total': SeniorPermission.query.count(),
+        'tasks_total': Task.query.count(),
+        'users_total': User.query.count(),
+    }
 
 
 def export_all_data():
@@ -244,7 +274,7 @@ def export_all_data():
     users = [u.to_dict(include_sensitive=True) for u in User.query.order_by(User.id.asc()).all() if u.username != 'admin']
     tasks = [t.to_dict() for t in Task.query.order_by(Task.position.asc(), Task.id.asc()).all()]
     return {
-        'version': 12,
+        'version': 13,
         'exported_at': datetime.utcnow().isoformat(),
         'settings': settings,
         'users': users,

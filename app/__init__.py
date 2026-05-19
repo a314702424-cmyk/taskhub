@@ -1,7 +1,7 @@
 import os
 from flask import Flask
 from flask_login import LoginManager
-from .models import db, User, ensure_default_data, ensure_sqlite_columns
+from .models import db, User, ensure_default_data, ensure_sqlite_columns, ensure_v12_integrity
 
 login_manager = LoginManager()
 login_manager.login_view = 'login'
@@ -37,5 +37,11 @@ def create_app():
         db.create_all()
         ensure_sqlite_columns()
         ensure_default_data()
+        try:
+            stats = ensure_v12_integrity()
+            print('TASKHUB V13 INTEGRITY READY:', stats)
+        except Exception as exc:
+            db.session.rollback()
+            print('TASKHUB V13 INTEGRITY ERROR:', exc)
 
     return app

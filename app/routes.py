@@ -8,7 +8,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from sqlalchemy import or_
 
 from .models import (
-    db, User, Task, TaskUpdate, TaskAssignment, SeniorPermission,
+    db, User, Task, TaskUpdate, TaskAssignment, SeniorPermission, ensure_v12_integrity,
     get_settings, export_all_data, import_all_data
 )
 from .utils import (
@@ -260,7 +260,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V12',
+            'ui_version': 'V13',
             'format_israel_datetime': format_israel_datetime,
         }
 
@@ -644,6 +644,27 @@ def register_routes(app):
         flash('נשלחו שני דוחות: שינויים במשמרת ודוח כללי.' if ok1 and ok2 else f'חלק מהשליחה נכשלה: {msg1} | {msg2}', 'success' if ok1 and ok2 else 'danger')
         return redirect_dashboard()
 
+    @app.route('/admin/repair-v12')
+    @login_required
+    @admin_required
+    def repair_v12():
+        try:
+            stats = ensure_v12_integrity()
+            flash(f"תיקון V12/V13 בוצע: שיוכי משימות {stats.get('assignments_total', 0)}, הרשאות בכיר {stats.get('senior_permissions_total', 0)}", 'success')
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'שגיאה בתיקון V12/V13: {exc}', 'danger')
+        return redirect(url_for('users_page'))
+
+    @app.route('/admin/v12-status')
+    @login_required
+    @admin_required
+    def v12_status():
+        stats = ensure_v12_integrity()
+        stats['ok'] = True
+        stats['version'] = 'v13'
+        return stats
+
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v12'}
+        return {'ok': True, 'version': 'v13', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}
