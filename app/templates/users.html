@@ -11,87 +11,99 @@
     </div>
 
     <span class="chip fw-bold">
-      V16 FIX
+      V16 ROLE FIX
     </span>
   </div>
 </div>
 
+<style>
+  .role-choice {
+    border: 1px solid var(--border, #e7ecf4);
+    background: #fff;
+    color: inherit;
+    border-radius: 999px;
+    padding: 8px 14px;
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .role-choice.active {
+    background: var(--primary, #1a73e8);
+    border-color: var(--primary, #1a73e8);
+    color: #fff;
+    font-weight: 700;
+  }
+
+  .user-edit-tools {
+    border-top: 1px solid var(--border, #e7ecf4);
+    padding-top: 12px;
+    margin-top: 12px;
+  }
+</style>
+
 <div class="row g-4">
 
-  <!-- SIDE -->
   <div class="col-xl-4">
-
     <div class="task-card p-4 sticky-top" style="top:85px">
 
       <h4 class="fw-bold mb-3">
         הוספת משתמש
       </h4>
 
-      <form method="post" class="row g-3">
+      <form method="post" class="row g-3" id="create-user-form">
 
         <div class="col-md-6">
           <label class="form-label">שם משתמש</label>
-          <input class="form-control"
-                 name="username"
-                 required>
+          <input class="form-control" name="username" required>
         </div>
 
         <div class="col-md-6">
           <label class="form-label">שם מלא</label>
-          <input class="form-control"
-                 name="full_name"
-                 required>
+          <input class="form-control" name="full_name" required>
         </div>
 
         <div class="col-md-6">
           <label class="form-label">אימייל עובד</label>
-          <input class="form-control"
-                 name="email">
+          <input class="form-control" name="email">
         </div>
 
         <div class="col-md-6">
+          <label class="form-label fw-bold">תפקיד</label>
 
-          <label class="form-label fw-bold">
-            תפקיד
-          </label>
+          <input type="hidden" name="role" id="create-role-value" value="employee">
 
           <div class="d-grid gap-2">
-
-            <label class="chip w-100">
-              <input type="radio"
-                     name="role"
-                     value="employee"
-                     checked>
+            <button type="button"
+                    class="role-choice active"
+                    data-role-target="create-role-value"
+                    data-role-value="employee">
               עובד
-            </label>
+            </button>
 
-            <label class="chip w-100">
-              <input type="radio"
-                     name="role"
-                     value="senior">
+            <button type="button"
+                    class="role-choice"
+                    data-role-target="create-role-value"
+                    data-role-value="senior">
               משתמש בכיר
-            </label>
+            </button>
 
-            <label class="chip w-100">
-              <input type="radio"
-                     name="role"
-                     value="admin">
+            <button type="button"
+                    class="role-choice"
+                    data-role-target="create-role-value"
+                    data-role-value="admin">
               מנהל
-            </label>
-
+            </button>
           </div>
         </div>
 
         <div class="col-md-6">
           <label class="form-label">סיסמה ראשונית</label>
-          <input class="form-control"
-                 name="password"
-                 value="123456">
+          <input class="form-control" name="password" value="123456">
         </div>
 
         <div class="col-md-6">
           <label class="form-label">צבע משתמש</label>
-
           <input type="color"
                  class="form-control form-control-color"
                  name="theme_color"
@@ -99,111 +111,77 @@
         </div>
 
         <div class="col-12">
-          <label class="form-label">
-            מייל יעד לסיכומים
-          </label>
-
+          <label class="form-label">מייל יעד לסיכומים</label>
           <input class="form-control"
-                 name="employer_target_email">
+                 name="employer_target_email"
+                 placeholder="מייל המעסיק/המנהל שיקבל סיכומים">
         </div>
 
         <div class="col-md-6">
           <label class="form-label">SMTP Host</label>
-
-          <input class="form-control"
-                 name="smtp_host"
-                 placeholder="smtp.gmail.com">
+          <input class="form-control" name="smtp_host" placeholder="smtp.gmail.com">
         </div>
 
         <div class="col-md-6">
           <label class="form-label">SMTP Port</label>
-
-          <input class="form-control"
-                 name="smtp_port"
-                 value="587">
+          <input class="form-control" name="smtp_port" value="587">
         </div>
 
         <div class="col-md-6">
           <label class="form-label">SMTP Username</label>
-
-          <input class="form-control"
-                 name="smtp_username">
+          <input class="form-control" name="smtp_username">
         </div>
 
         <div class="col-md-6">
           <label class="form-label">SMTP Password</label>
-
-          <input type="password"
-                 class="form-control"
-                 name="smtp_password">
+          <input type="password" class="form-control" name="smtp_password">
         </div>
 
         <div class="col-12">
           <label class="form-label">כתובת שולח</label>
-
-          <input class="form-control"
-                 name="sender_email">
+          <input class="form-control" name="sender_email">
         </div>
 
         <div class="col-12">
-
-          <label class="form-label fw-bold">
-            הרשאות למשתמש בכיר
-          </label>
-
+          <label class="form-label fw-bold">הרשאות למשתמש בכיר</label>
           <div class="tiny mb-2">
-            בחר אילו עובדים המשתמש הבכיר יוכל לראות ולנהל
+            בחר אילו עובדים המשתמש הבכיר יוכל לראות ולנהל.
           </div>
 
           <div class="row g-2">
-
             {% for emp in employee_users %}
-
               <div class="col-md-6">
-
                 <label class="chip w-100">
-
                   <input type="checkbox"
                          name="allowed_user_ids"
                          value="{{ emp.id }}">
-
                   {{ emp.full_name }}
-
                 </label>
-
               </div>
-
             {% endfor %}
-
           </div>
         </div>
 
         <div class="col-12 d-grid">
-
           <button class="btn btn-primary">
             צור משתמש
           </button>
-
         </div>
 
       </form>
-
     </div>
   </div>
 
-  <!-- USERS -->
   <div class="col-xl-8">
 
     <div class="task-card p-4 mb-4">
-
       <h3 class="fw-bold mb-1">
         רשימת משתמשים
       </h3>
 
       <div class="tiny">
-        לחץ על משתמש כדי לערוך
+        לחץ על משתמש כדי לפתוח עריכה מלאה.
       </div>
-
     </div>
 
     <div class="row g-3">
@@ -211,8 +189,7 @@
       {% for user in users %}
 
       <div class="col-lg-6">
-
-        <div class="task-card p-3 h-100">
+        <div class="task-card p-3 h-100" id="user-card-{{ user.id }}">
 
           <button class="w-100 bg-transparent border-0 text-start p-0"
                   type="button"
@@ -220,18 +197,14 @@
                   data-bs-target="#user-edit-{{ user.id }}">
 
             <div class="d-flex justify-content-between gap-2 align-items-start">
-
               <div class="d-flex gap-2 align-items-center">
 
                 <span class="avatar-dot"
                       style="background: {{ user.theme_color }}">
-
                   {{ user.full_name[:1] }}
-
                 </span>
 
                 <div>
-
                   <div class="fw-bold">
                     {{ user.full_name }}
                   </div>
@@ -239,13 +212,10 @@
                   <div class="tiny">
                     {{ user.email or user.username }}
                   </div>
-
                 </div>
-
               </div>
 
               <div class="d-flex gap-1 flex-wrap justify-content-end">
-
                 <span class="chip">
                   {{ user.role_label }}
                 </span>
@@ -253,28 +223,36 @@
                 <span class="chip">
                   {{ 'פעיל' if user.is_active_user else 'לא פעיל' }}
                 </span>
-
               </div>
-
             </div>
 
             <div class="tiny mt-2">
-              שולח:
-              {{ user.display_sender_email or 'לא הוגדר' }}
+              שולח: {{ user.display_sender_email or 'לא הוגדר' }}
             </div>
+
+            {% if user.role == 'senior' %}
+              <div class="tiny mt-1">
+                מורשה לנהל:
+                {% for p in user.senior_permissions %}
+                  {{ p.allowed_user.full_name if p.allowed_user else '' }}
+                  {% if not loop.last %}, {% endif %}
+                {% else %}
+                  לא נבחרו עובדים
+                {% endfor %}
+              </div>
+            {% endif %}
 
           </button>
 
-          <div class="collapse mt-3"
-               id="user-edit-{{ user.id }}">
+          <div class="collapse mt-3" id="user-edit-{{ user.id }}">
 
             <form method="post"
                   action="{{ url_for('edit_user', user_id=user.id) }}"
-                  class="row g-2">
+                  class="row g-2 user-edit-form"
+                  data-user-id="{{ user.id }}">
 
               <div class="col-md-6">
                 <label class="form-label">שם משתמש</label>
-
                 <input class="form-control"
                        name="username"
                        value="{{ user.username }}">
@@ -282,7 +260,6 @@
 
               <div class="col-md-6">
                 <label class="form-label">שם מלא</label>
-
                 <input class="form-control"
                        name="full_name"
                        value="{{ user.full_name }}">
@@ -290,73 +267,51 @@
 
               <div class="col-md-6">
                 <label class="form-label">אימייל עובד</label>
-
                 <input class="form-control"
                        name="email"
                        value="{{ user.email }}">
               </div>
 
-              <!-- FIXED ROLE -->
-
               <div class="col-md-6">
+                <label class="form-label fw-bold">תפקיד</label>
 
-                <label class="form-label fw-bold">
-                  תפקיד
-                </label>
+                <input type="hidden"
+                       name="role"
+                       id="role-value-{{ user.id }}"
+                       value="{{ user.role or 'employee' }}">
 
                 <div class="d-grid gap-2">
 
-                  <label class="chip w-100">
-
-                    <input type="radio"
-                           name="role"
-                           value="employee"
-                           {% if user.role == 'employee' %}
-                           checked
-                           {% endif %}>
-
+                  <button type="button"
+                          class="role-choice {% if user.role == 'employee' %}active{% endif %}"
+                          data-role-target="role-value-{{ user.id }}"
+                          data-role-value="employee">
                     עובד
+                  </button>
 
-                  </label>
-
-                  <label class="chip w-100">
-
-                    <input type="radio"
-                           name="role"
-                           value="senior"
-                           {% if user.role == 'senior' %}
-                           checked
-                           {% endif %}>
-
+                  <button type="button"
+                          class="role-choice {% if user.role == 'senior' %}active{% endif %}"
+                          data-role-target="role-value-{{ user.id }}"
+                          data-role-value="senior">
                     משתמש בכיר
+                  </button>
 
-                  </label>
-
-                  <label class="chip w-100">
-
-                    <input type="radio"
-                           name="role"
-                           value="admin"
-                           {% if user.role == 'admin' %}
-                           checked
-                           {% endif %}>
-
+                  <button type="button"
+                          class="role-choice {% if user.role == 'admin' %}active{% endif %}"
+                          data-role-target="role-value-{{ user.id }}"
+                          data-role-value="admin">
                     מנהל
-
-                  </label>
+                  </button>
 
                 </div>
 
+                <div class="tiny mt-1">
+                  בחירה זו נשלחת לשרת דרך שדה מוסתר כדי למנוע תקלה שבה תמיד נשלח עובד.
+                </div>
               </div>
 
-              <!-- END FIX -->
-
               <div class="col-md-6">
-
-                <label class="form-label">
-                  צבע משתמש
-                </label>
-
+                <label class="form-label">צבע משתמש</label>
                 <input type="color"
                        class="form-control form-control-color"
                        name="theme_color"
@@ -364,55 +319,35 @@
               </div>
 
               <div class="col-md-6">
-
-                <label class="form-label">
-                  מייל יעד לסיכומים
-                </label>
-
+                <label class="form-label">מייל יעד לסיכומים</label>
                 <input class="form-control"
                        name="employer_target_email"
                        value="{{ user.employer_target_email }}">
               </div>
 
               <div class="col-md-6">
-
-                <label class="form-label">
-                  SMTP Host
-                </label>
-
+                <label class="form-label">SMTP Host</label>
                 <input class="form-control"
                        name="smtp_host"
                        value="{{ user.smtp_host }}">
               </div>
 
               <div class="col-md-6">
-
-                <label class="form-label">
-                  SMTP Port
-                </label>
-
+                <label class="form-label">SMTP Port</label>
                 <input class="form-control"
                        name="smtp_port"
                        value="{{ user.smtp_port }}">
               </div>
 
               <div class="col-md-6">
-
-                <label class="form-label">
-                  SMTP Username
-                </label>
-
+                <label class="form-label">SMTP Username</label>
                 <input class="form-control"
                        name="smtp_username"
                        value="{{ user.smtp_username }}">
               </div>
 
               <div class="col-md-6">
-
-                <label class="form-label">
-                  SMTP Password
-                </label>
-
+                <label class="form-label">SMTP Password</label>
                 <input type="password"
                        class="form-control"
                        name="smtp_password"
@@ -420,75 +355,102 @@
               </div>
 
               <div class="col-12">
-
-                <label class="form-label">
-                  כתובת שולח
-                </label>
-
+                <label class="form-label">כתובת שולח</label>
                 <input class="form-control"
                        name="sender_email"
                        value="{{ user.sender_email }}">
               </div>
 
               <div class="col-12">
+                <label class="form-label fw-bold">הרשאות משתמש בכיר</label>
 
-                <label class="form-label fw-bold">
-                  הרשאות משתמש בכיר
-                </label>
-
-                {% set allowed_ids = user.senior_permissions
-                    | map(attribute='allowed_user_id')
-                    | list %}
+                {% set allowed_ids = user.senior_permissions | map(attribute='allowed_user_id') | list %}
 
                 <div class="row g-2">
-
                   {% for emp in employee_users %}
-
                     <div class="col-md-6">
-
                       <label class="chip w-100">
-
                         <input type="checkbox"
                                name="allowed_user_ids"
                                value="{{ emp.id }}"
-                               {% if emp.id in allowed_ids %}
-                               checked
-                               {% endif %}>
-
+                               {% if emp.id in allowed_ids %}checked{% endif %}>
                         {{ emp.full_name }}
-
                       </label>
-
                     </div>
-
                   {% endfor %}
-
                 </div>
-
               </div>
 
-              <div class="col-12">
-
+              <div class="col-12 user-edit-tools">
                 <button class="btn btn-primary w-100">
                   שמור שינויים
                 </button>
-
               </div>
 
             </form>
 
+            <div class="d-flex gap-2 flex-wrap mt-3">
+              <form method="post" action="{{ url_for('toggle_user', user_id=user.id) }}">
+                <button class="btn btn-outline-secondary">
+                  {{ 'השבת' if user.is_active_user else 'הפעל' }}
+                </button>
+              </form>
+
+              <form method="post"
+                    action="{{ url_for('reset_password', user_id=user.id) }}"
+                    class="d-flex gap-2 flex-grow-1">
+                <input class="form-control"
+                       name="new_password"
+                       placeholder="סיסמה חדשה">
+                <button class="btn btn-outline-primary">
+                  עדכן סיסמה
+                </button>
+              </form>
+            </div>
+
           </div>
-
         </div>
-
       </div>
 
       {% endfor %}
 
     </div>
-
   </div>
 
 </div>
+
+<script>
+document.addEventListener('click', function (event) {
+  const button = event.target.closest('[data-role-target][data-role-value]');
+  if (!button) return;
+
+  const targetId = button.getAttribute('data-role-target');
+  const roleValue = button.getAttribute('data-role-value');
+  const hiddenInput = document.getElementById(targetId);
+
+  if (!hiddenInput) return;
+
+  hiddenInput.value = roleValue;
+
+  const parent = button.closest('.d-grid');
+  if (parent) {
+    parent.querySelectorAll('[data-role-target="' + targetId + '"]').forEach(function (btn) {
+      btn.classList.remove('active');
+    });
+  }
+
+  button.classList.add('active');
+});
+
+document.addEventListener('submit', function (event) {
+  const form = event.target.closest('form');
+  if (!form) return;
+
+  const roleInput = form.querySelector('input[name="role"]');
+  if (roleInput) {
+    console.log('SUBMIT ROLE:', roleInput.value);
+  }
+});
+</script>
 
 {% endblock %}
