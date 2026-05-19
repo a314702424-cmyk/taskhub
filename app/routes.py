@@ -345,7 +345,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V14',
+            'ui_version': 'V15',
             'format_israel_datetime': format_israel_datetime,
         }
 
@@ -678,10 +678,17 @@ def register_routes(app):
         if existing and existing.id != user.id:
             flash('שם המשתמש כבר קיים.', 'danger')
             return redirect(url_for('users_page'))
+        posted_role = (request.form.get('role') or user.role or 'employee').strip()
+        if posted_role not in ('admin', 'senior', 'employee'):
+            posted_role = 'employee'
+
+        allowed_ids = request.form.getlist('allowed_user_ids')
+        print('USER EDIT ROLE POSTED:', user.id, posted_role, 'ALLOWED:', allowed_ids)
+
         user.username = username
         user.full_name = request.form.get('full_name', '').strip()
         user.email = request.form.get('email', '').strip()
-        user.role = request.form.get('role', user.role)
+        user.role = posted_role
         user.smtp_host = request.form.get('smtp_host', '').strip()
         user.smtp_port = int(request.form.get('smtp_port') or 587)
         user.smtp_username = request.form.get('smtp_username', '').strip()
@@ -691,7 +698,6 @@ def register_routes(app):
         user.theme_color = request.form.get('theme_color', '#1a73e8').strip() or '#1a73e8'
         SeniorPermission.query.filter_by(senior_id=user.id).delete()
         if user.role == 'senior':
-            allowed_ids = request.form.getlist('allowed_user_ids')
             print('SENIOR EDIT ALLOWED IDS:', user.id, allowed_ids)
             for allowed_id in allowed_ids:
                 if str(allowed_id).isdigit():
@@ -770,9 +776,9 @@ def register_routes(app):
     def v12_status():
         stats = ensure_v12_integrity()
         stats['ok'] = True
-        stats['version'] = 'v14'
+        stats['version'] = 'v15'
         return stats
 
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v14', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}
+        return {'ok': True, 'version': 'v15', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}
