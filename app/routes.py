@@ -345,7 +345,7 @@ def register_routes(app):
             'today_date': date.today(),
             'priority_meta': PRIORITY_META,
             'status_meta': STATUS_META,
-            'ui_version': 'V15',
+            'ui_version': 'V16',
             'format_israel_datetime': format_israel_datetime,
         }
 
@@ -643,8 +643,16 @@ def register_routes(app):
             if User.query.filter_by(username=username).first():
                 flash('שם המשתמש כבר קיים.', 'danger')
                 return redirect(url_for('users_page'))
+            allowed_ids = request.form.getlist('allowed_user_ids')
+            posted_role = (request.form.get('role') or 'employee').strip()
+            if posted_role not in ('admin', 'senior', 'employee'):
+                posted_role = 'employee'
+            if posted_role == 'employee' and allowed_ids:
+                posted_role = 'senior'
+            print('USER CREATE ROLE POSTED:', posted_role, 'ALLOWED:', allowed_ids)
+
             user = User(username=username, full_name=request.form.get('full_name', '').strip(),
-                        email=request.form.get('email', '').strip(), role=request.form.get('role', 'employee'),
+                        email=request.form.get('email', '').strip(), role=posted_role,
                         is_active_user=True, smtp_host=request.form.get('smtp_host', '').strip(),
                         smtp_port=int(request.form.get('smtp_port') or 587),
                         smtp_username=request.form.get('smtp_username', '').strip(),
@@ -656,7 +664,6 @@ def register_routes(app):
             db.session.add(user)
             db.session.flush()
             if user.role == 'senior':
-                allowed_ids = request.form.getlist('allowed_user_ids')
                 print('SENIOR CREATE ALLOWED IDS:', user.id, allowed_ids)
                 for allowed_id in allowed_ids:
                     if str(allowed_id).isdigit():
@@ -678,12 +685,14 @@ def register_routes(app):
         if existing and existing.id != user.id:
             flash('שם המשתמש כבר קיים.', 'danger')
             return redirect(url_for('users_page'))
-        posted_role = (request.form.get('role') or user.role or 'employee').strip()
+        allowed_ids = request.form.getlist('allowed_user_ids')
+        posted_role = (request.form.get('edit_role') or request.form.get('role') or user.role or 'employee').strip()
         if posted_role not in ('admin', 'senior', 'employee'):
             posted_role = 'employee'
+        if posted_role == 'employee' and allowed_ids:
+            posted_role = 'senior'
 
-        allowed_ids = request.form.getlist('allowed_user_ids')
-        print('USER EDIT ROLE POSTED:', user.id, posted_role, 'ALLOWED:', allowed_ids)
+        print('USER EDIT ROLE POSTED:', user.id, posted_role, 'ALLOWED:', allowed_ids, 'RAW_ROLE:', request.form.get('role'), 'RAW_EDIT_ROLE:', request.form.get('edit_role'))
 
         user.username = username
         user.full_name = request.form.get('full_name', '').strip()
@@ -776,9 +785,9 @@ def register_routes(app):
     def v12_status():
         stats = ensure_v12_integrity()
         stats['ok'] = True
-        stats['version'] = 'v15'
+        stats['version'] = 'v16'
         return stats
 
     @app.route('/health')
     def health():
-        return {'ok': True, 'version': 'v15', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}
+        return {'ok': True, 'version': 'v16', 'assignments': TaskAssignment.query.count(), 'senior_permissions': SeniorPermission.query.count()}

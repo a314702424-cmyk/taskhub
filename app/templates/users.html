@@ -11,7 +11,7 @@
     </div>
 
     <span class="chip fw-bold">
-      V16 ROLE FIX
+      V16
     </span>
   </div>
 </div>
@@ -276,7 +276,7 @@
                 <label class="form-label fw-bold">תפקיד</label>
 
                 <input type="hidden"
-                       name="role"
+                       name="edit_role"
                        id="role-value-{{ user.id }}"
                        value="{{ user.role or 'employee' }}">
 
@@ -446,7 +446,7 @@ document.addEventListener('submit', function (event) {
   const form = event.target.closest('form');
   if (!form) return;
 
-  const roleInput = form.querySelector('input[name="role"]');
+  const roleInput = form.querySelector('input[name="edit_role"]') || form.querySelector('input[name="role"]');
   if (roleInput) {
     console.log('SUBMIT ROLE:', roleInput.value);
   }
